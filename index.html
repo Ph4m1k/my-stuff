@@ -1309,6 +1309,8 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .ib-t small{display:block;margin-top:3px;color:var(--muted);font-size:0.74rem;}
   .ib-acts{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px;}
   .ib-area{margin-top:3px;font-size:0.78rem;color:var(--ink);}
+  .ib-row.ib-has-area{cursor:pointer;}
+  .ib-row.ib-has-area:hover{background:color-mix(in srgb, var(--ink) 4%, transparent);}
   .ib-hint{display:flex;gap:5px;margin-top:7px;}
   .ib-hint input{flex:1;min-width:0;padding:6px 8px;border:1px solid var(--line);border-radius:4px;background:var(--paper);color:var(--ink);font-size:0.8rem;}
   .ib-hint .pc-btn{padding:5px 10px;font-size:0.78rem;}
@@ -6069,6 +6071,26 @@ function gmapsHref(p){
   return p.name ? `https://www.google.com/maps/search/${encodeURIComponent(p.name)}/@${ll},17z` : `https://www.google.com/maps/search/?api=1&query=${ll}`;
 }
 function directionsHref(p){ return `https://www.google.com/maps/dir/?api=1&destination=${p.lat.toFixed(6)},${p.lng.toFixed(6)}`; }
+// In mainland China, Google Maps uses the officially shifted "GCJ-02" coordinates (a few hundred metres off).
+// Our map uses real GPS coordinates, so links from there are shifted back (accurate to a few metres).
+function inMainlandChina(lat, lng){
+  if(lng < 73.5 || lng > 135.1 || lat < 18.1 || lat > 53.6) return false;
+  if(lat > 21.8 && lat < 25.4 && lng > 119.3 && lng < 122.1) return false;      // Taiwan
+  if(lat > 22.13 && lat < 22.57 && lng > 113.82 && lng < 114.44) return false;   // Hong Kong
+  if(lat > 22.10 && lat < 22.22 && lng > 113.52 && lng < 113.61) return false;   // Macau
+  return true;
+}
+function gcjToGps(lat, lng){
+  if(!inMainlandChina(lat, lng)) return [lat, lng];
+  const a = 6378245.0, ee = 0.00669342162296594323, PI = Math.PI, x = lng - 105, y = lat - 35;
+  let dLat = -100 + 2*x + 3*y + 0.2*y*y + 0.1*x*y + 0.2*Math.sqrt(Math.abs(x));
+  dLat += (20*Math.sin(6*x*PI) + 20*Math.sin(2*x*PI))*2/3 + (20*Math.sin(y*PI) + 40*Math.sin(y/3*PI))*2/3 + (160*Math.sin(y/12*PI) + 320*Math.sin(y*PI/30))*2/3;
+  let dLng = 300 + x + 2*y + 0.1*x*x + 0.1*x*y + 0.1*Math.sqrt(Math.abs(x));
+  dLng += (20*Math.sin(6*x*PI) + 20*Math.sin(2*x*PI))*2/3 + (20*Math.sin(x*PI) + 40*Math.sin(x/3*PI))*2/3 + (150*Math.sin(x/12*PI) + 300*Math.sin(x/30*PI))*2/3;
+  const rad = lat/180*PI, mg = 1 - ee*Math.sin(rad)*Math.sin(rad), sq = Math.sqrt(mg);
+  dLat = dLat*180/((a*(1 - ee))/(mg*sq)*PI); dLng = dLng*180/(a/sq*Math.cos(rad)*PI);
+  return [lat - dLat, lng - dLng];
+}
 // read a place out of a Google Maps link (or plain "50.08, 14.42")
 function parsePlaceLink(text){
   const t = String(text||'').trim(); if(!t) return null;
@@ -6089,6 +6111,7 @@ function parsePlaceLink(text){
   if((m = /\/maps\/place\/([^/@?]+)/.exec(u.pathname))) out.name = decodeURIComponent(m[1].replace(/\+/g,' '));
   if(out.name && /^-?\d+\.\d+,\s*-?\d+\.\d+$/.test(out.name)) delete out.name;
   if(out.lat!=null && !validLatLng(out.lat, out.lng)){ delete out.lat; delete out.lng; }
+  if(out.lat!=null){ const [la, ln] = gcjToGps(out.lat, out.lng); out.lat = la; out.lng = ln; }
   return out;
 }
 
@@ -6376,7 +6399,10 @@ async function useSocialLink(text){
   plPick = null; renderPlaces();
   toast(r.message || 'Done.');
   if(r.added && r.added.length) showImported(r.added.map(a=>a.id));
-  else if(r.inbox){ plShowInbox = true; togglePlacesList(true); renderPlaces(); }
+  else if(r.inbox){
+    flyToArea(r.area);
+    plShowInbox = true; if(!isWide()) togglePlacesList(true); renderPlaces();
+  }
 }
 // new pins arrive through the live connection a moment later: then show them
 function showImported(ids, tries){
@@ -6409,15 +6435,23 @@ function renderInbox(list){
       <div class="ib-t"><b>${esc(it.caption || it.about || socialName(it.url || '') + ' link')}</b>
         ${it.area && it.area.name ? `<div class="ib-area">📍 Somewhere in ${esc(it.area.name)}</div>` : ''}
         <small>${esc(it.reason || '')}${it.guesses && it.guesses.length ? ` Maybe: ${esc(it.guesses.map(g=>g.name).join(', '))}` : ''}</small>
-        ${canHint && it.source!=='instagram' ? `<form class="ib-hint" data-hint><input type="text" placeholder="Place name, or paste the comment" aria-label="Help find this place" value="${esc(ibDraft[it.id] ?? it.hint ?? '')}" maxlength="400"><button type="submit" class="pc-btn">Find</button></form>
+        ${canHint && it.source!=='instagram' ? `<form class="ib-hint" data-hint><input type="text" placeholder="Name, comment, or Google Maps link" aria-label="Place name, the comment that mentions it, or a Google Maps link" value="${esc(ibDraft[it.id] ?? it.hint ?? '')}" maxlength="400"><button type="submit" class="pc-btn">Find</button></form>
         <div class="ib-msg" role="status">${esc(ibMsg[it.id] || '')}</div>` : ''}
         <div class="ib-acts">${canHint && it.source!=='instagram' ? '<button type="button" class="pc-btn" data-a="retry">↻ Try again</button>' : ''}<button type="button" class="pc-btn pc-main" data-a="pin">Pin it</button>
           <a class="pc-btn" href="${esc(safeHref(it.url || '') || '#')}" target="_blank" rel="noopener noreferrer">Watch</a>
+          ${(it.guesses && it.guesses.length) || (it.area && it.area.name) ? `<a class="pc-btn" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(it.guesses && it.guesses.length ? [it.guesses[0].name, it.guesses[0].city].filter(Boolean).join(' ') : it.area.name)}" target="_blank" rel="noopener noreferrer">${GMAPS_SVG}Find on Google Maps</a>` : ''}
           <button type="button" class="pc-btn" data-a="rm">Remove</button></div></div></div>`).join('');
   list.querySelectorAll('.ib-row').forEach(row=>{
     const it = inbox.find(x=>x.id===row.dataset.id);
     row.querySelector('[data-a=pin]').onclick = ()=>pinFromInbox(it);
     row.querySelector('[data-a=rm]').onclick = ()=>removeInbox(it);
+    // tap an entry: the map shows its city
+    if(it.area && it.area.lat!=null) row.classList.add('ib-has-area');
+    row.onclick = e=>{
+      if(e.target.closest('button, a, input, form') || !it.area) return;
+      flyToArea(it.area);
+      if(!isWide()) togglePlacesList(false);
+    };
     const rt = row.querySelector('[data-a=retry]'); if(rt){ rt.disabled = ibBusy.has(it.id); rt.onclick = ()=>helpInbox(it, '', true); }
     const f = row.querySelector('[data-hint]');
     if(f){
@@ -6432,6 +6466,12 @@ function renderInbox(list){
 // you tell it the name (or paste the comment): the reader tries again with that
 async function helpInbox(it, hint, retry){
   if(ibBusy.has(it.id)) return;                       // already asking
+  if(hint && parsePlaceLink(hint) && /^https?:/i.test(hint)){       // a Google Maps link: pin it right there
+    delete ibDraft[it.id];
+    pinFromInbox(it, true);
+    plPick.inText = hint; usePlaceLink(hint);
+    return;
+  }
   if(!hint && !retry){ ibMsg[it.id] = 'Type the place name, or paste the comment that mentions it.'; renderPlaces(); return; }
   ibBusy.add(it.id); ibMsg[it.id] = retry ? 'Reading it again (caption and comments)… a few seconds.' : 'Looking for it… a few seconds.'; renderPlaces();
   let r = null;
@@ -6443,16 +6483,23 @@ async function helpInbox(it, hint, retry){
     inbox = inbox.filter(x=>x.id!==it.id); plShowInbox = false; renderPlaces();
     showImported(r.added.map(a=>a.id));
   } else {
+    if(r && r.ok && r.area) flyToArea(r.area);
     ibMsg[it.id] = r && r.ok ? (retry ? "Still couldn't tell. Type the place's name below, or tap Pin it." : "Still couldn't find it. Try the exact name, or tap Pin it.") : (r && r.error) || "That didn't work. Try again.";
     renderPlaces();
   }
 }
-function pinFromInbox(it){
+// show roughly where a link is: its city (or country)
+function flyToArea(area){
+  if(!area || !validLatLng(area.lat, area.lng) || !plMap) return;
+  plMap.flyTo(area.lat, area.lng, /,/.test(area.name || '') ? 12 : 6);
+}
+function pinFromInbox(it, noSearch){
   plShowInbox = false;
   startAddPlace();
   plPick.srcLink = it.url || ''; plPick.inboxId = it.id;
   if(it.area && validLatLng(it.area.lat, it.area.lng)) plMap.setView(it.area.lat, it.area.lng, 13);   // start in its city
   const guess = it.guesses && it.guesses[0];
+  if(noSearch) return;
   if(guess){ searchPlacesByName([guess.name, guess.city].filter(Boolean).join(' ')); }
   else { plPick.msg = 'Type the place’s name, or tap the map. The video link will be saved with it.'; renderPickBar(); }
 }
@@ -6774,6 +6821,29 @@ function usePlaceLink(text){
   plPick.inText = text;
   const r = parsePlaceLink(text);
   if(!r){ searchPlacesByName(text); return; }
+  if(r.short && window.MYSTUFF_HOST && MYSTUFF_HOST.importLink && !plPick.resolving){
+    plPick.resolving = true; plPick.msg = 'Opening the Google Maps link…'; renderPickBar();
+    MYSTUFF_HOST.importLink(r.url).then(res=>{
+      if(!plPick) return;
+      plPick.resolving = false;
+      const full = res && res.ok && res.resolved && parsePlaceLink(res.resolved);
+      if(full && !full.short){
+        if(full.lat==null && validLatLng(res.lat, res.lng)){ const [la, ln] = gcjToGps(res.lat, res.lng); full.lat = la; full.lng = ln; }
+        if(full.lat!=null){
+          plPick.link = r.url;
+          plMap.flyTo(full.lat, full.lng, 16);
+          plPick.temp = [full.lat, full.lng]; renderPlaces();
+          openPlaceForm(null, {lat:full.lat, lng:full.lng, name:full.name || plPick.name || '', gmapsUrl:r.url, link:plPick.srcLink || ''});
+          return;
+        }
+        if(full.name){ plPick.link = r.url; plPick.name = full.name; searchPlacesByName(full.name); return; }
+      }
+      plPick.link = r.url; plPick.inText = '';
+      plPick.msg = "Couldn't read that link. Type the place's name, or tap the map. The link is kept with the place.";
+      renderPickBar();
+    });
+    return;
+  }
   if(r.short){
     plPick.link = r.url; plPick.inText = '';
     plPick.msg = "Short links from the phone can't be read here, but the link is kept with the place. Type the place's name to find it, or tap the map.";
@@ -6786,7 +6856,8 @@ function usePlaceLink(text){
     renderPickBar(); return;
   }
   plMap.flyTo(r.lat, r.lng, 16);
-  openPlaceForm(null, {lat:r.lat, lng:r.lng, name:r.name || '', gmapsUrl:r.url || ''});
+  plPick.temp = [r.lat, r.lng]; renderPlaces();
+  openPlaceForm(null, {lat:r.lat, lng:r.lng, name:r.name || '', gmapsUrl:r.url || '', link:plPick.srcLink || ''});
 }
 function pickedSpot(lat, lng){
   if(!plPick) return;

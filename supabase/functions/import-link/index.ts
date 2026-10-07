@@ -101,6 +101,30 @@ function sb(env: Env, fetchFn: typeof fetch) {
 // ---------------- reading a TikTok ----------------
 const isTikTok = (u: string) => /(^|\.)tiktok\.com$/i.test(hostOf(u));
 const isInstagram = (u: string) => /(^|\.)instagram\.com$/i.test(hostOf(u));
+const isGoogleShort = (u: string) => /^(maps\.app\.goo\.gl|goo\.gl|g\.co)$/i.test(hostOf(u));
+
+// a short Google Maps link from the phone ("maps.app.goo.gl/…") -> the full link with the place and its coordinates
+async function openGoogleShort(link: string, fetchFn: typeof fetch) {
+  let u = link, lat: number | null = null, lng: number | null = null;
+  for (let i = 0; i < 6; i++) {
+    const r = await fetchFn(u, { redirect: 'manual', headers: { 'User-Agent': UA, 'Accept-Language': 'en' } });
+    const loc = r.headers.get('location');
+    if (!loc) {
+      // no more hops: the page itself may say where the map is centred
+      const html = r.status === 200 ? await r.text() : '';
+      const m = /APP_INITIALIZATION_STATE=\[\[\[[\d.]+,(-?\d+\.\d+),(-?\d+\.\d+)\]/.exec(html);
+      if (m) { lng = +m[1]; lat = +m[2]; }
+      break;
+    }
+    let next = new URL(loc, u).href;
+    if (/(^|\.)consent\.google\./i.test(hostOf(next))) {       // Europe: Google's cookie page carries the real address inside
+      const c = new URL(next).searchParams.get('continue'); if (c) next = c; else break;
+    }
+    u = next;
+    if (/google\.[a-z.]+\/maps/i.test(u) && /(!3d-?\d|@-?\d+\.\d+,-?\d+\.\d+)/.test(decodeURIComponent(u))) break;
+  }
+  return { resolved: u, lat, lng };
+}
 function hostOf(u: string) { try { return new URL(u).hostname; } catch { return ''; } }
 const videoId = (u: string) => (/\/(?:video|photo)\/(\d{8,})/.exec(u) || [])[1] || '';
 
@@ -290,6 +314,10 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
   try { const j = JSON.parse(raw); text = j.url || j.text || raw; hint = String(j.hint || '').slice(0, 500).trim(); inboxId = String(j.inboxId || ''); } catch (_) { /* plain text */ }
   const link = (/https?:\/\/[^\s"'<>]+/.exec(String(text)) || [])[0] || '';
   if (!link) return reply({ ok: false, error: 'No link found.' }, 400);
+  if (isGoogleShort(link)) {
+    try { const g = await openGoogleShort(link, fetchFn); return reply({ ok: true, resolved: g.resolved, lat: g.lat, lng: g.lng }); }
+    catch (_) { return reply({ ok: false, error: "Couldn't open that Google Maps link." }); }
+  }
   if (isInstagram(link)) {
     const id = newId();
     await db.save(uid, 'inbox', id, { url: link, source: 'instagram', caption: '', reason: "Instagram links can't be read yet. Pin it yourself.", createdAt: new Date().toISOString() });
