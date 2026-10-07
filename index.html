@@ -6407,13 +6407,14 @@ function renderInbox(list){
         <small>${esc(it.reason || '')}${it.guesses && it.guesses.length ? ` Maybe: ${esc(it.guesses.map(g=>g.name).join(', '))}` : ''}</small>
         ${canHint && it.source!=='instagram' ? `<form class="ib-hint" data-hint><input type="text" placeholder="Place name, or paste the comment" aria-label="Help find this place" value="${esc(ibDraft[it.id] ?? it.hint ?? '')}" maxlength="400"><button type="submit" class="pc-btn">Find</button></form>
         <div class="ib-msg" role="status">${esc(ibMsg[it.id] || '')}</div>` : ''}
-        <div class="ib-acts"><button type="button" class="pc-btn pc-main" data-a="pin">Pin it</button>
+        <div class="ib-acts">${canHint && it.source!=='instagram' ? '<button type="button" class="pc-btn" data-a="retry">↻ Try again</button>' : ''}<button type="button" class="pc-btn pc-main" data-a="pin">Pin it</button>
           <a class="pc-btn" href="${esc(safeHref(it.url || '') || '#')}" target="_blank" rel="noopener noreferrer">Watch</a>
           <button type="button" class="pc-btn" data-a="rm">Remove</button></div></div></div>`).join('');
   list.querySelectorAll('.ib-row').forEach(row=>{
     const it = inbox.find(x=>x.id===row.dataset.id);
     row.querySelector('[data-a=pin]').onclick = ()=>pinFromInbox(it);
     row.querySelector('[data-a=rm]').onclick = ()=>removeInbox(it);
+    const rt = row.querySelector('[data-a=retry]'); if(rt){ rt.disabled = ibBusy.has(it.id); rt.onclick = ()=>helpInbox(it, '', true); }
     const f = row.querySelector('[data-hint]');
     if(f){
       const inp = f.querySelector('input'), btn = f.querySelector('button');
@@ -6425,18 +6426,18 @@ function renderInbox(list){
   });
 }
 // you tell it the name (or paste the comment): the reader tries again with that
-async function helpInbox(it, hint){
-  if(!hint){ ibMsg[it.id] = 'Type the place name, or paste the comment that mentions it.'; renderPlaces(); return; }
-  ibBusy.add(it.id); ibMsg[it.id] = 'Looking for it… a few seconds.'; renderPlaces();
+async function helpInbox(it, hint, retry){
+  if(!hint && !retry){ ibMsg[it.id] = 'Type the place name, or paste the comment that mentions it.'; renderPlaces(); return; }
+  ibBusy.add(it.id); ibMsg[it.id] = retry ? 'Reading it again (caption and comments)… a few seconds.' : 'Looking for it… a few seconds.'; renderPlaces();
   let r = null;
-  try{ r = await MYSTUFF_HOST.importLink(it.url, {hint, inboxId: it.id}); }catch(e){ r = {ok:false, error:"Couldn't reach your Supabase. Try again."}; }
+  try{ r = await MYSTUFF_HOST.importLink(it.url, hint ? {hint, inboxId: it.id} : {inboxId: it.id}); }catch(e){ r = {ok:false, error:"Couldn't reach your Supabase. Try again."}; }
   ibBusy.delete(it.id);
   if(r && r.ok && r.added && r.added.length){
     delete ibMsg[it.id]; toast(r.message || 'Added to your map.');
     inbox = inbox.filter(x=>x.id!==it.id); plShowInbox = false; renderPlaces();
     showImported(r.added.map(a=>a.id));
   } else {
-    ibMsg[it.id] = r && r.ok ? "Still couldn't find it. Try the exact name, or tap Pin it." : (r && r.error) || "That didn't work. Try again.";
+    ibMsg[it.id] = r && r.ok ? (retry ? "Still couldn't tell. Type the place's name below, or tap Pin it." : "Still couldn't find it. Try the exact name, or tap Pin it.") : (r && r.error) || "That didn't work. Try again.";
     renderPlaces();
   }
 }
