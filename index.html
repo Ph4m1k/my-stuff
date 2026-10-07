@@ -640,13 +640,15 @@ HOST.checkPlaces = async (list)=>{
 HOST.importLink = async (url, extra)=>{
   let session = null; try{ session = (await sb.auth.getSession()).data.session; }catch(e){}
   if(!session) return { ok:false, error:'Log in again, then try once more.' };
-  let r;
+  let r; const ctl = new AbortController(), timer = setTimeout(()=>ctl.abort(), 120000);
   try{
     r = await fetch(CFG.supabaseUrl + '/functions/v1/import-link', {
-      method:'POST', body: JSON.stringify({ url, ...(extra || {}) }),
+      method:'POST', body: JSON.stringify({ url, ...(extra || {}) }), signal: ctl.signal,
       headers:{ 'Content-Type':'application/json', Authorization:'Bearer ' + session.access_token, apikey: CFG.supabaseKey },
     });
-  }catch(e){ return { ok:false, error:"Couldn't reach your Supabase. Check your internet and try again." }; }
+  }catch(e){
+    return { ok:false, error: ctl.signal.aborted ? 'That took too long, so I stopped waiting. Try again in a minute.' : "Couldn't reach your Supabase. Check your internet and try again." };
+  }finally{ clearTimeout(timer); }
   let j = null; try{ j = await r.json(); }catch(e){}
   if(r.status === 404) return { ok:false, error:"The TikTok reader isn't set up in Supabase yet." };
   if(!j) return { ok:false, error:"That didn't work (" + r.status + "). Try again." };
@@ -6365,7 +6367,9 @@ async function useSocialLink(text){
   }
   plPick.inText = url; plPick.importing = true; plPick.results = null;
   plPick.msg = `Reading the ${socialName(url)}… this takes a few seconds.`; renderPickBar();
+  const slow = setTimeout(()=>{ if(plPick && plPick.importing){ plPick.msg = 'Still working… places in some countries take longer to find on the map (up to a minute).'; renderPickBar(); } }, 15000);
   let r = null; try{ r = await H.importLink(url); }catch(e){ r = {ok:false, error:"Couldn't reach your Supabase. Check your internet and try again."}; }
+  clearTimeout(slow);
   if(!plPick) return;
   plPick.importing = false;
   if(!r || !r.ok){ plPick.msg = (r && r.error) || "That didn't work. Try again."; renderPickBar(); return; }
@@ -6431,8 +6435,9 @@ async function helpInbox(it, hint, retry){
   if(!hint && !retry){ ibMsg[it.id] = 'Type the place name, or paste the comment that mentions it.'; renderPlaces(); return; }
   ibBusy.add(it.id); ibMsg[it.id] = retry ? 'Reading it again (caption and comments)… a few seconds.' : 'Looking for it… a few seconds.'; renderPlaces();
   let r = null;
+  const slow = setTimeout(()=>{ if(ibBusy.has(it.id)){ ibMsg[it.id] = 'Still working… places in some countries take longer to find on the map (up to a minute).'; renderPlaces(); } }, 15000);
   try{ r = await MYSTUFF_HOST.importLink(it.url, hint ? {hint, inboxId: it.id} : {inboxId: it.id}); }catch(e){ r = {ok:false, error:"Couldn't reach your Supabase. Try again."}; }
-  ibBusy.delete(it.id);
+  clearTimeout(slow); ibBusy.delete(it.id);
   if(r && r.ok && r.added && r.added.length){
     delete ibMsg[it.id]; toast(r.message || 'Added to your map.');
     inbox = inbox.filter(x=>x.id!==it.id); plShowInbox = false; renderPlaces();

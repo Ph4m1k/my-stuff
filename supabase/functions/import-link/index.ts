@@ -205,16 +205,19 @@ async function maptiler(q: string, fetchFn: typeof fetch, extra = '') {
   return r.ok ? ((await r.json()).features || []) : [];
 }
 const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+// OpenStreetMap's free lookup can be slow: give each try at most 12 seconds, and don't wait for a second server after a timeout
 async function overpass(q: string, fetchFn: typeof fetch) {
   for (const u of OVERPASS) {
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 12000);
     try {
-      const r = await fetchFn(u, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(q) });
+      const r = await fetchFn(u, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(q), signal: ctl.signal });
       if (r.ok) return (await r.json()).elements || [];
-    } catch (_) { /* try the next one */ }
+    } catch (_) {
+      if (ctl.signal.aborted) return [];
+    } finally { clearTimeout(t); }
   }
   return [];
 }
-const reEsc = (s: string) => s.replace(/[\\^$.*+?()[\]{}|"]/g, '\\$&');
 async function locate(p: Json, fetchFn: typeof fetch) {
   const name = String(p.name || '').trim(); if (!name) return null;
   const local = String(p.local_name || '').trim();
@@ -237,9 +240,11 @@ async function locate(p: Json, fetchFn: typeof fetch) {
     const city = (await maptiler(where, fetchFn, '&types=municipality,locality,place,county,region'))[0] || (await maptiler(where, fetchFn))[0];
     if (city && city.center) {
       const [lng, lat] = city.center;
-      // any name tag (name, name:en, name:zh…) equal to the English or the local name
-      const q = names.map((n) => `nwr(around:30000,${lat},${lng})[~"^name(:[a-z_A-Z-]+)?$"~"^${reEsc(n)}$",i];`).join('');
-      const els = await overpass(`[out:json][timeout:25];(${q});out tags center 20;`, fetchFn);
+      // exact name matches (fast): the name as written, its English name, or the local name
+      const keys = ['name', 'name:en', 'name:zh', 'name:ja', 'name:ko', 'name:th'];
+      const variants = Array.from(new Set(names.flatMap((n) => [n, n.replace(/\b\w/g, (c) => c.toUpperCase())])));
+      const q = variants.flatMap((n) => keys.map((k) => `nwr(around:20000,${lat},${lng})["${k}"="${n.replace(/["\\]/g, '')}"];`)).join('');
+      const els = await overpass(`[out:json][timeout:12];(${q});out tags center 20;`, fetchFn);
       let pick: Json = null, pd = Infinity;
       for (const e of els) {
         const la = e.lat ?? e.center?.lat, lo = e.lon ?? e.center?.lon; if (la == null) continue;
@@ -255,8 +260,16 @@ async function locate(p: Json, fetchFn: typeof fetch) {
 }
 
 // ---------------- the whole job ----------------
+// no single outside service may hold everything up: each request gets at most 25 seconds
+const withTimeout = (fn: typeof fetch, ms: number) => ((input: any, init: any = {}) => {
+  if (init.signal) return fn(input, init);
+  const c = new AbortController(), t = setTimeout(() => c.abort(), ms);
+  return fn(input, { ...init, signal: c.signal }).finally(() => clearTimeout(t));
+}) as typeof fetch;
+
 export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fetch): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
+  fetchFn = withTimeout(fetchFn, 25000);
   if (req.method !== 'POST') return reply({ ok: false, error: 'Use POST' }, 405);
   const db = sb(env, fetchFn);
 
