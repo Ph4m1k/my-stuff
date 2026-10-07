@@ -24,7 +24,7 @@ const reply = (body: Json, status = 200) =>
 
 // ---------------- small helpers ----------------
 const fold = (s: unknown) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
-  .replace(/[^a-z0-9]+/g, ' ').trim();
+  .replace(/[^\p{L}\p{N}]+/gu, ' ').trim();   // keeps letters of any script (Chinese, Thai…)
 function nameScore(want: string, got: string): number {
   const a = fold(want), b = fold(got);
   if (!a || !b) return 0;
@@ -183,7 +183,7 @@ Never guess or invent a place. If the post doesn't make clear which place it is,
 Separately, say which city or area (and country) the post is in, if that is clear from anything above (caption, hashtags, comments, picture), even when the exact place isn't.
 
 Answer with JSON only, nothing else:
-{"places":[{"name":"exact place name","city":"city","country":"country","address":"street address if stated, else empty","kind":"one word: cafe/restaurant/bar/bakery/shop/hotel/museum/viewpoint/park/beach/hike/attraction/other","sure":0.0}],"area":{"city":"city or area, else empty","country":"country, else empty"},"about":"what the post is about, max 10 words"}
+{"places":[{"name":"exact place name","local_name":"the name in the local language and script if you know it (e.g. Chinese characters), else empty","city":"city","country":"country","address":"street address if stated, else empty","kind":"one word: cafe/restaurant/bar/bakery/shop/hotel/museum/viewpoint/park/beach/hike/attraction/other","sure":0.0}],"area":{"city":"city or area, else empty","country":"country, else empty"},"about":"what the post is about, max 10 words"}
 "sure" is how certain you are (0 to 1) that this exact place is meant. At most 10 places.` });
   const r = await fetchFn('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -217,14 +217,19 @@ async function overpass(q: string, fetchFn: typeof fetch) {
 const reEsc = (s: string) => s.replace(/[\\^$.*+?()[\]{}|"]/g, '\\$&');
 async function locate(p: Json, fetchFn: typeof fetch) {
   const name = String(p.name || '').trim(); if (!name) return null;
+  const local = String(p.local_name || '').trim();
+  const names = [name, ...(local && local !== name ? [local] : [])];
   const where = [p.city, p.country].filter(Boolean).join(', ');
-  // 1) the map search: "Name, street, City, Country"
-  const feats = await maptiler([name, p.address, where].filter(Boolean).join(', '), fetchFn);
+  // 1) the map search: "Name, street, City, Country" (and the same with the local name)
   let best: Json = null, bestScore = 0;
-  for (const f of feats) {
-    const s = nameScore(name, f.text || '') + ((f.place_type || []).includes('poi') ? 0.1 : 0)
-      + (p.city && fold(f.place_name).includes(fold(p.city)) ? 0.1 : 0);
-    if (s > bestScore) { bestScore = s; best = f; }
+  for (const n of names) {
+    const feats = await maptiler([n, p.address, where].filter(Boolean).join(', '), fetchFn);
+    for (const f of feats) {
+      const s = Math.max(...names.map((x) => nameScore(x, f.text || ''))) + ((f.place_type || []).includes('poi') ? 0.1 : 0)
+        + (p.city && fold(f.place_name).includes(fold(p.city)) ? 0.1 : 0);
+      if (s > bestScore) { bestScore = s; best = f; }
+    }
+    if (best && bestScore >= 0.8) break;
   }
   if (best && bestScore >= 0.8) return { lat: best.center[1], lng: best.center[0], address: best.place_name || '', how: 'map' };
   // 2) OpenStreetMap: a place with that name around the city
@@ -232,7 +237,9 @@ async function locate(p: Json, fetchFn: typeof fetch) {
     const city = (await maptiler(where, fetchFn, '&types=municipality,locality,place,county,region'))[0] || (await maptiler(where, fetchFn))[0];
     if (city && city.center) {
       const [lng, lat] = city.center;
-      const els = await overpass(`[out:json][timeout:20];nwr(around:25000,${lat},${lng})["name"~"^${reEsc(name)}$",i];out tags center 20;`, fetchFn);
+      // any name tag (name, name:en, name:zh…) equal to the English or the local name
+      const q = names.map((n) => `nwr(around:30000,${lat},${lng})[~"^name(:[a-z_A-Z-]+)?$"~"^${reEsc(n)}$",i];`).join('');
+      const els = await overpass(`[out:json][timeout:25];(${q});out tags center 20;`, fetchFn);
       let pick: Json = null, pd = Infinity;
       for (const e of els) {
         const la = e.lat ?? e.center?.lat, lo = e.lon ?? e.center?.lon; if (la == null) continue;
@@ -349,7 +356,7 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
     await db.save(uid, 'inbox', inbox, {
       url: canon, source: 'tiktok', srcId, caption: String(post.caption || '').slice(0, 400), author: post.author || '', thumbUrl, about,
       ...(areaAt ? { area: areaAt } : {}), ...(hint ? { hint } : {}),
-      guesses: missed.map((g) => ({ name: g.name, city: g.city || '' })).slice(0, 5),
+      guesses: missed.map((g) => ({ name: g.name, city: g.city || '', ...(g.local_name ? { local: g.local_name } : {}) })).slice(0, 5),
       reason: !guesses.length ? (aiError ? "Couldn't read it this time." : !key ? 'The AI key is missing, and the video has no location tag.'
           : hint ? "Still couldn't tell which place it is." : "Couldn't tell which place it is.")
         : added.length ? `Found ${added.length}, but couldn't find ${missed.map((g) => g.name).join(', ')} on the map.` : "Couldn't find it on the map.",

@@ -6356,7 +6356,7 @@ function socialLink(t){ const m = /https?:\/\/[^\s]*(tiktok\.com|instagram\.com)
 const socialName = u=>/instagram\./i.test(u) ? 'Instagram' : 'TikTok';
 // outside Claude: your Supabase reads the post and adds the places itself. Inside Claude: keep the link with the place you pin.
 async function useSocialLink(text){
-  if(!plPick) return;
+  if(!plPick || plPick.importing) return;
   const url = socialLink(text), H = window.MYSTUFF_HOST;
   if(!H || !H.importLink){
     plPick.srcLink = url; plPick.inText = '';
@@ -6427,6 +6427,7 @@ function renderInbox(list){
 }
 // you tell it the name (or paste the comment): the reader tries again with that
 async function helpInbox(it, hint, retry){
+  if(ibBusy.has(it.id)) return;                       // already asking
   if(!hint && !retry){ ibMsg[it.id] = 'Type the place name, or paste the comment that mentions it.'; renderPlaces(); return; }
   ibBusy.add(it.id); ibMsg[it.id] = retry ? 'Reading it again (caption and comments)… a few seconds.' : 'Looking for it… a few seconds.'; renderPlaces();
   let r = null;
@@ -6754,7 +6755,7 @@ function renderPickBar(){
       ${res ? `<div class="pp-results">${res.length ? res.map((r,i)=>`<button type="button" data-i="${i}"><span class="rr-e">${esc(r.emoji)}</span><span class="rr-t"><b>${esc(r.name)}</b><small>${esc([r.kind, r.address].filter(Boolean).join(' · '))}</small></span></button>`).join('')
         : '<div class="pp-none">Nothing found. Try adding the city, or tap the map.</div>'}</div>` : ''}`;
     const inp = bar.querySelector('#plPickIn');
-    const go = ()=>{ const t = inp.value.trim(); if(!t) return; if(socialLink(t)){ useSocialLink(t); return; } const r = parsePlaceLink(t); if(r) usePlaceLink(t); else searchPlacesByName(t); };
+    const go = ()=>{ const t = inp.value.trim(); if(!t || plPick.importing) return; if(socialLink(t)){ useSocialLink(t); return; } const r = parsePlaceLink(t); if(r) usePlaceLink(t); else searchPlacesByName(t); };
     bar.querySelector('.pp-go').onclick = go;
     bar.querySelectorAll('.pp-results button').forEach(b=>b.onclick = ()=>pickSearchResult(+b.dataset.i));
     inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } if(e.key==='Escape'){ e.preventDefault(); cancelPick(); } });
