@@ -466,6 +466,25 @@ HOST.createMap = el=>{
     });
   }catch(e){ el.classList.remove('pm-gl'); return null; }
   map.touchZoomRotate.disableRotation(); map.keyboard.disableRotation();
+  // names like Google Maps: English (or the name in Latin letters), with the local name underneath for places
+  // that use another script (十八梯 -> "Eighteen Stairs / 十八梯"). Streets get just one line.
+  const EN = ['coalesce', ['get', 'name:en'], ['get', 'name_en'], ['get', 'name:latin']];
+  const TWO = ['case',
+    ['all', ['has', 'name:nonlatin'], ['!=', ['coalesce', ['get', 'name:en'], ['get', 'name_en'], ['get', 'name:latin'], ''], '']],
+    ['format', EN, {}, '\n', {}, ['get', 'name:nonlatin'], { 'font-scale': 0.82 }],
+    ['coalesce', ['get', 'name:en'], ['get', 'name_en'], ['get', 'name:latin'], ['get', 'name'], '']];
+  const ONE = ['coalesce', ['get', 'name:en'], ['get', 'name_en'], ['get', 'name:latin'], ['get', 'name'], ''];
+  function englishLabels(){
+    let layers = []; try{ layers = map.getStyle().layers || []; }catch(e){ return; }
+    for(const l of layers){
+      if(l.type !== 'symbol' || !l.layout) continue;
+      const tf = JSON.stringify(l.layout['text-field'] || '');
+      if(!/name/.test(tf) || /nonlatin|name:latin/.test(tf)) continue;     // not a name, or already done
+      const line = l.layout['symbol-placement'] && l.layout['symbol-placement'] !== 'point';
+      try{ map.setLayoutProperty(l.id, 'text-field', line ? ONE : TWO); }catch(e){}
+    }
+  }
+  map.on('styledata', englishLabels);
   // MapTiler's logo (their free plan asks for it)
   const logo = document.createElement('a');
   logo.className = 'pm-mtlogo'; logo.href = 'https://www.maptiler.com'; logo.target = '_blank'; logo.rel = 'noopener noreferrer';
@@ -538,7 +557,9 @@ HOST.createMap = el=>{
     const pr = f.properties, c = f.geometry.coordinates;
     const cats = [pr.class, pr.subclass, f.sourceLayer === 'mountain_peak' ? 'mountain' : '', f.sourceLayer === 'aerodrome_label' ? 'airport' : ''].filter(Boolean).map(String);
     const kind = String(pr.subclass || pr.class || (f.sourceLayer === 'aerodrome_label' ? 'airport' : f.sourceLayer === 'mountain_peak' ? 'peak' : '')).replace(/_/g, ' ');
-    return { name: String(pr.name), kind: kind ? kind[0].toUpperCase() + kind.slice(1) : '', categories: cats, lat: c[1], lng: c[0] };
+    const en = pr['name:en'] || pr.name_en || pr['name:latin'] || '', local = pr['name:nonlatin'] || '';
+    return { name: String(en || pr.name), local: local && local !== en ? String(local) : '',
+             kind: kind ? kind[0].toUpperCase() + kind.slice(1) : '', categories: cats, lat: c[1], lng: c[0] };
   }
   map.on('click', e=>{
     const poi = m.onPoiClick && poiAt(e.point, e.originalEvent && e.originalEvent.pointerType === 'touch' ? 12 : 6);
@@ -658,7 +679,7 @@ HOST.importLink = async (url, extra)=>{
 const PH_SKIP = new Set(['highway', 'railway', 'public_transport', 'boundary', 'route', 'waterway', 'power', 'barrier', 'tunnel', 'bridge']);
 function distKm(a, b, c, d){ const k = Math.PI/180, x = (d-b)*k*Math.cos((a+c)/2*k), y = (c-a)*k; return Math.sqrt(x*x+y*y)*6371; }
 async function searchMapTiler(text, lat, lng, signal){
-  const u = `https://api.maptiler.com/geocoding/${encodeURIComponent(text)}.json?key=${MT}&limit=8&proximity=${(+lng).toFixed(5)},${(+lat).toFixed(5)}`;
+  const u = `https://api.maptiler.com/geocoding/${encodeURIComponent(text)}.json?key=${MT}&limit=8&language=en&proximity=${(+lng).toFixed(5)},${(+lat).toFixed(5)}`;
   const r = await fetch(u, { signal });
   if(!r.ok) throw new Error('search ' + r.status);
   const fc = await r.json();
@@ -678,7 +699,7 @@ async function searchMapTiler(text, lat, lng, signal){
   });
 }
 async function searchPhoton(text, lat, lng, signal){
-  const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&lat=${(+lat).toFixed(5)}&lon=${(+lng).toFixed(5)}&limit=8`, { signal });
+  const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&lat=${(+lat).toFixed(5)}&lon=${(+lng).toFixed(5)}&limit=8&lang=en`, { signal });
   if(!r.ok) return [];
   const fc = await r.json();
   return (fc.features || []).map(f=>{
@@ -1309,6 +1330,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pc-top{display:flex;align-items:center;gap:10px;padding-right:24px;}
   .pc-t b{display:block;font-family:Georgia,serif;font-size:1.05rem;}
   .pc-t small{color:var(--muted);font-size:0.78rem;}
+  .pc-local{display:block;font-size:0.84rem;color:var(--ink);opacity:.8;margin:1px 0 2px;}
   .pl-card{max-height:min(62vh, 520px);overflow-y:auto;overscroll-behavior:contain;}
   .pl-ctrl button{position:relative;}
   .pl-ctrl button[hidden]{display:none;}
@@ -6425,19 +6447,20 @@ function renderPoiCard(card){
   card.style.setProperty('--pc', 'var(--accent)');
   card.innerHTML = `<button type="button" class="pc-x" aria-label="Close" title="Close">×</button>
     <div class="pc-top"><span class="pl-ico">${esc(q.emoji)}</span><div class="pc-t"><b>${esc(q.name)}</b>
+    ${q.local ? `<span class="pc-local" lang="${/[\u3040-\u30ff]/.test(q.local) ? 'ja' : /[\uac00-\ud7af]/.test(q.local) ? 'ko' : /[\u0e00-\u0e7f]/.test(q.local) ? 'th' : 'zh'}">${esc(q.local)}</span>` : ''}
     <small>${esc(q.kind || 'On the map')}</small></div></div>
     ${q.closed ? '<div class="pc-warn">Marked as closed on OpenStreetMap</div>' : ''}
     ${q.infoState==='loading' ? '<div class="pi-loading">Looking up opening hours and details…</div>' : placeInfoHTML(q.info, false)}
     <div class="pc-acts">
       <button type="button" class="pc-btn pc-main" data-a="save">＋ Save to my places</button>
-      <a class="pc-btn" href="https://www.google.com/maps/search/${encodeURIComponent(q.name)}/@${ll},17z" target="_blank" rel="noopener noreferrer">${GMAPS_SVG}Google Maps</a>
+      <a class="pc-btn" href="https://www.google.com/maps/search/${encodeURIComponent(q.local || q.name)}/@${ll},17z" target="_blank" rel="noopener noreferrer">${GMAPS_SVG}Google Maps</a>
       <a class="pc-btn" href="https://www.google.com/maps/dir/?api=1&destination=${ll}" target="_blank" rel="noopener noreferrer">Directions</a>
     </div>`;
   card.querySelector('.pc-x').onclick = ()=>{ plPoi = null; renderPlaces(); };
   card.querySelector('[data-a=save]').onclick = ()=>{
     const t = plPoi; plPoi = null;
     plPick = {mode:'add', temp:[t.lat, t.lng], link:null}; renderPlaces();
-    const info = t.info || null, addr = info ? [info.street, info.city].filter(Boolean).join(', ') : '';
+    const info = t.info || null, addr = [t.local, ...(info ? [info.street, info.city] : [])].filter(Boolean).join(', ');
     openPlaceForm(null, {lat:t.lat, lng:t.lng, name:t.name, emoji:t.emoji, address:addr, osm:t.osm || '', info});
   };
 }
@@ -6843,11 +6866,12 @@ function tappedMapPlace(poi){
   if(plPick){                                             // adding or moving a pin: use that exact spot (and its name)
     if(plPick.mode==='move'){ pickedSpot(poi.lat, poi.lng); return; }
     plPick.temp = [poi.lat, poi.lng]; renderPlaces();
-    openPlaceForm(null, {lat:poi.lat, lng:poi.lng, name:poi.name, emoji, gmapsUrl:plPick.link || '', link:plPick.srcLink || ''});
+    openPlaceForm(null, {lat:poi.lat, lng:poi.lng, name: plPick.guessName && plPick.inText === plPick.guessName ? plPick.guessName : poi.name,
+                         address: poi.local || '', emoji, gmapsUrl:plPick.link || '', link:plPick.srcLink || ''});
     return;
   }
   // already saved? open yours instead
-  const n = norm(poi.name), mine = places.find(p=>validLatLng(p.lat, p.lng) && norm(p.name||'')===n &&
+  const n = norm(poi.name), nl = poi.local ? norm(poi.local) : '', mine = places.find(p=>validLatLng(p.lat, p.lng) && (norm(p.name||'')===n || (nl && norm(p.name||'')===nl)) &&
     Math.abs(p.lat - poi.lat) < 0.0006 && Math.abs(p.lng - poi.lng) < 0.0009);
   if(mine){ selectPlace(mine.id); return; }
   plSel = null; plPoi = {...poi, emoji};
