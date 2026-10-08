@@ -30,6 +30,14 @@ function nameScore(want: string, got: string): number {
   if (!a || !b) return 0;
   if (a === b) return 1;
   if ((a.length >= 4 && b.includes(a)) || (b.length >= 4 && a.includes(b))) return 0.85;
+  // Chinese, Japanese, Thai… have no spaces between words: compare pairs of letters instead
+  if (!/[a-z0-9]/.test(a + b)) {
+    if (a.length >= 2 && (b.includes(a) || a.includes(b))) return 0.85;
+    const pairs = (x: string) => { const o: string[] = []; const t = x.replace(/ /g, ''); for (let i = 0; i < t.length - 1; i++) o.push(t.slice(i, i + 2)); return o; };
+    const pa = pairs(a), pb = pairs(b); if (!pa.length || !pb.length) return 0;
+    let c = 0; const left = [...pb]; pa.forEach((x) => { const i = left.indexOf(x); if (i >= 0) { c++; left.splice(i, 1); } });
+    return (2 * c) / (pa.length + pb.length);
+  }
   const ta = new Set(a.split(' ').filter((w) => w.length > 1)), tb = new Set(b.split(' ').filter((w) => w.length > 1));
   if (!ta.size || !tb.size) return 0;
   let common = 0; ta.forEach((w) => { if (tb.has(w)) common++; });
@@ -239,6 +247,23 @@ async function maptiler(q: string, fetchFn: typeof fetch, extra = '') {
   return r.ok ? ((await r.json()).features || []) : [];
 }
 const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+// the free OpenStreetMap servers say "busy" when asked several things at once: one question at a time
+let overpassLine: Promise<unknown> = Promise.resolve();
+function overpassInTurn(q: string, fetchFn: typeof fetch): Promise<Json[]> {
+  const run = overpassLine.then(() => overpass(q, fetchFn));
+  overpassLine = run.catch(() => null);
+  return run;
+}
+// Photon: a free OpenStreetMap search that copes with spelling differences and knows far more places in China than MapTiler
+const PHOTON_SKIP = new Set(['highway', 'railway', 'public_transport', 'boundary', 'route', 'waterway', 'power', 'barrier', 'tunnel', 'bridge', 'natural', 'office']);
+const PHOTON_PLACE_OK = new Set(['square', 'neighbourhood', 'quarter', 'locality']);
+async function photon(q: string, lat: number, lng: number, fetchFn: typeof fetch) {
+  try {
+    const r = await fetchFn(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lat=${lat}&lon=${lng}&limit=6`, { headers: { 'User-Agent': 'my-stuff (ph4m1k.github.io)' } });
+    return r.ok ? ((await r.json()).features || []) as Json[] : [];
+  } catch (_) { return []; }
+}
+const latinOnly = (s: string) => !/[^\p{Script=Latin}\p{N}\p{P}\p{S}\s]/u.test(s);
 // OpenStreetMap's free lookup can be slow: give each try at most 12 seconds, and don't wait for a second server after a timeout
 async function overpass(q: string, fetchFn: typeof fetch) {
   for (const u of OVERPASS) {
@@ -278,7 +303,27 @@ async function locate(p: Json, fetchFn: typeof fetch) {
       const keys = ['name', 'name:en', 'name:zh', 'name:ja', 'name:ko', 'name:th'];
       const variants = Array.from(new Set(names.flatMap((n) => [n, n.replace(/\b\w/g, (c) => c.toUpperCase())])));
       const q = variants.flatMap((n) => keys.map((k) => `nwr(around:20000,${lat},${lng})["${k}"="${n.replace(/["\\]/g, '')}"];`)).join('');
-      const els = await overpass(`[out:json][timeout:12];(${q});out tags center 20;`, fetchFn);
+      // Photon first (fast, forgiving): the local-language name, then the English one
+      for (const n of [...names].reverse()) {
+        let pickP: Json = null, ps = 0, firstOk = true;
+        for (const f of await photon(n, lat, lng, fetchFn)) {
+          const pr = f.properties || {}, [flng, flat] = f.geometry?.coordinates || [];
+          if (flat == null || PHOTON_SKIP.has(pr.osm_key) || (pr.osm_key === 'place' && !PHOTON_PLACE_OK.has(pr.osm_value))
+            || (pr.osm_key === 'landuse' && !['retail', 'commercial'].includes(pr.osm_value))) continue;
+          if (metres(lat, lng, flat, flng) > 35000) continue;              // must be around the city
+          let sc = Math.max(...names.map((x) => nameScore(x, pr.name || '')));
+          // asked in English, OpenStreetMap answers with the Chinese (etc.) name: trust the top nearby place
+          if (sc < 0.5 && firstOk && n === name && latinOnly(name) && pr.name && !latinOnly(pr.name)) sc = 0.5;
+          firstOk = false;
+          if (sc > ps) { ps = sc; pickP = { lat: flat, lng: flng, pr }; }
+        }
+        if (pickP && ps >= 0.5) {
+          const pr = pickP.pr, street = [pr.street, pr.housenumber].filter(Boolean).join(' ');
+          return { lat: pickP.lat, lng: pickP.lng, address: [pr.name !== name ? pr.name : '', street, pr.district || pr.city || p.city].filter(Boolean).join(', '),
+            ...(pr.osm_type && pr.osm_id ? { osm: ({ N: 'node', W: 'way', R: 'relation' } as Json)[pr.osm_type] + '/' + pr.osm_id } : {}), how: 'photon' };
+        }
+      }
+      const els = await overpassInTurn(`[out:json][timeout:12];(${q});out tags center 20;`, fetchFn);
       let pick: Json = null, pd = Infinity;
       for (const e of els) {
         const la = e.lat ?? e.center?.lat, lo = e.lon ?? e.center?.lon; if (la == null) continue;

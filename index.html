@@ -654,7 +654,10 @@ HOST.importLink = async (url, extra)=>{
   if(!j) return { ok:false, error:"That didn't work (" + r.status + "). Try again." };
   return j;
 };
-HOST.searchPlaces = async (text, lat, lng, signal)=>{
+// place search: MapTiler, plus Photon (OpenStreetMap), which knows far more places in countries like China
+const PH_SKIP = new Set(['highway', 'railway', 'public_transport', 'boundary', 'route', 'waterway', 'power', 'barrier', 'tunnel', 'bridge']);
+function distKm(a, b, c, d){ const k = Math.PI/180, x = (d-b)*k*Math.cos((a+c)/2*k), y = (c-a)*k; return Math.sqrt(x*x+y*y)*6371; }
+async function searchMapTiler(text, lat, lng, signal){
   const u = `https://api.maptiler.com/geocoding/${encodeURIComponent(text)}.json?key=${MT}&limit=8&proximity=${(+lng).toFixed(5)},${(+lat).toFixed(5)}`;
   const r = await fetch(u, { signal });
   if(!r.ok) throw new Error('search ' + r.status);
@@ -662,7 +665,7 @@ HOST.searchPlaces = async (text, lat, lng, signal)=>{
   return (fc.features || []).map(f=>{
     const c = f.center || (f.geometry && f.geometry.coordinates) || [], p = f.properties || {};
     const isPoi = (f.place_type || []).includes('poi');
-    const cats = [].concat(p.categories || [], p.kind || [], isPoi ? [] : []).map(String);
+    const cats = [].concat(p.categories || [], p.kind || []).map(String);
     return {
       name: f.text || f.place_name || text,
       address: f.place_name || '',
@@ -670,8 +673,44 @@ HOST.searchPlaces = async (text, lat, lng, signal)=>{
       categories: isPoi ? cats : [],
       emoji: isPoi ? '' : '📍',
       kind: isPoi ? cats.slice(0, 2).join(', ').replace(/_/g, ' ') : '',
+      poi: isPoi,
     };
   });
+}
+async function searchPhoton(text, lat, lng, signal){
+  const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&lat=${(+lat).toFixed(5)}&lon=${(+lng).toFixed(5)}&limit=8`, { signal });
+  if(!r.ok) return [];
+  const fc = await r.json();
+  return (fc.features || []).map(f=>{
+    const p = f.properties || {}, c = (f.geometry && f.geometry.coordinates) || [];
+    if(PH_SKIP.has(p.osm_key) || !p.name) return null;
+    const isPoi = !['place', 'landuse', 'building'].includes(p.osm_key) || p.osm_value === 'square';
+    const val = String(p.osm_value || '').replace(/_/g, ' ');
+    return {
+      name: p.name,
+      address: [[p.street, p.housenumber].filter(Boolean).join(' '), p.district || p.locality, p.city || p.county, p.country].filter(Boolean).join(', '),
+      lat: +c[1], lng: +c[0],
+      categories: isPoi ? [p.osm_value, p.osm_key].filter(Boolean).map(String) : [],
+      emoji: isPoi ? '' : '📍',
+      kind: isPoi && val !== 'yes' ? val : '',
+      poi: isPoi,
+    };
+  }).filter(Boolean);
+}
+HOST.searchPlaces = async (text, lat, lng, signal)=>{
+  const [mt, ph] = await Promise.all([
+    searchMapTiler(text, lat, lng, signal).catch(e=>{ if(signal && signal.aborted) throw e; return null; }),
+    searchPhoton(text, lat, lng, signal).catch(e=>{ if(signal && signal.aborted) throw e; return []; }),
+  ]);
+  if(mt === null && !ph.length) throw new Error('search failed');
+  // real places first (MapTiler's, then Photon's within reach), then streets, towns and the rest
+  const m = mt || [], phNear = ph.filter(x=>distKm(+lat, +lng, x.lat, x.lng) < 300), out = [];
+  const ordered = [...m.filter(x=>x.poi), ...phNear.filter(x=>x.poi), ...m.filter(x=>!x.poi), ...phNear.filter(x=>!x.poi)];
+  for(const x of ordered){
+    if(out.some(o=>Math.abs(o.lat - x.lat) < 0.0008 && Math.abs(o.lng - x.lng) < 0.0008)) continue;   // the same spot twice
+    out.push(x); if(out.length >= 8) break;
+  }
+  return out.map(({poi, ...x})=>x);
 };
 
 // ================= what the app asks for =================
@@ -1312,6 +1351,17 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .ib-row.ib-has-area{cursor:pointer;}
   .ib-row.ib-has-area:hover{background:color-mix(in srgb, var(--ink) 4%, transparent);}
   .ib-hint{display:flex;gap:5px;margin-top:7px;}
+  .ib-maybe{margin-top:7px;}
+  .ib-maybe-l{display:block;font-size:0.74rem;color:var(--muted);margin-bottom:4px;}
+  .ib-gs{display:flex;flex-wrap:wrap;gap:5px;}
+  .ib-g{display:inline-flex;align-items:stretch;border:1px solid var(--line);border-radius:999px;background:var(--paper);overflow:hidden;max-width:100%;}
+  .ib-g button, .ib-g a{display:inline-flex;align-items:center;border:0;background:none;color:var(--ink);font:inherit;font-size:0.78rem;cursor:pointer;text-decoration:none;}
+  .ib-g .ib-gname{gap:4px;padding:5px 6px 5px 10px;min-width:0;}
+  .ib-g .ib-gname span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ib-g .ib-gmap{padding:5px 9px 5px 7px;border-left:1px solid var(--line);color:var(--muted);}
+  .ib-g button:hover, .ib-g a:hover{background:color-mix(in srgb, var(--ink) 6%, transparent);}
+  .ib-g button:disabled{opacity:.45;cursor:not-allowed;}
+  .ib-gmore{border:1px dashed var(--line);border-radius:999px;background:none;color:var(--muted);font-size:0.76rem;padding:4px 10px;cursor:pointer;}
   .ib-hint input{flex:1;min-width:0;padding:6px 8px;border:1px solid var(--line);border-radius:4px;background:var(--paper);color:var(--ink);font-size:0.8rem;}
   .ib-hint .pc-btn{padding:5px 10px;font-size:0.78rem;}
   .ib-msg{margin-top:4px;font-size:0.74rem;color:var(--accent);}
@@ -6255,7 +6305,8 @@ function pickSearchResult(i){
   const r = plPick && plPick.results && plPick.results[i]; if(!r) return;
   plMap.flyTo(r.lat, r.lng, Math.max(plMap.z, 16));
   plPick.temp = [r.lat, r.lng]; renderPlaces();
-  openPlaceForm(null, {lat:r.lat, lng:r.lng, name:r.name, address:r.address, emoji:r.emoji, gmapsUrl:plPick.link || '', link:plPick.srcLink || ''});
+  const gn = plPick.guessName && plPick.inText === plPick.guessName ? plPick.guessName : '', keepName = gn && r.name && r.name.trim().toLowerCase() !== gn.trim().toLowerCase();
+  openPlaceForm(null, {lat:r.lat, lng:r.lng, name: gn || r.name, address: keepName ? [r.name, r.address].filter(Boolean).join(', ') : r.address, emoji:r.emoji, gmapsUrl:plPick.link || '', link:plPick.srcLink || ''});
 }
 function enterPlaces(){
   ensurePlacesMap();
@@ -6454,7 +6505,7 @@ function fromVideoHTML(p, big){
     <div class="pv-t"><b>From ${esc(socialName(p.link || ''))}${p.author ? ' · @' + esc(p.author) : ''}</b>${p.caption ? `<span>${esc(p.caption)}</span>` : ''}</div></div>`;
 }
 // ---- the Inbox: links that couldn't be placed automatically ----
-const ibMsg = {}, ibBusy = new Set(), ibDraft = {};
+const ibMsg = {}, ibBusy = new Set(), ibDraft = {}, ibOpen = new Set();
 function renderInbox(list){
   const canHint = !!(window.MYSTUFF_HOST && MYSTUFF_HOST.importLink);
   const act = document.activeElement, typingIn = act && act.closest && act.closest('.ib-row') && act.tagName==='INPUT' ? act.closest('.ib-row').dataset.id : null;
@@ -6464,18 +6515,23 @@ function renderInbox(list){
       ${it.thumbUrl ? `<img class="ib-img" src="${esc(it.thumbUrl)}" alt="" loading="lazy">` : `<span class="ib-img ib-noimg">${it.source==='instagram' ? '📷' : '🎬'}</span>`}
       <div class="ib-t"><b>${esc(it.caption || it.about || socialName(it.url || '') + ' link')}</b>
         ${it.area && it.area.name ? `<div class="ib-area">📍 Somewhere in ${esc(it.area.name)}</div>` : ''}
-        <small>${esc(it.reason || '')}${it.guesses && it.guesses.length ? ` Maybe: ${esc(it.guesses.map(g=>g.name).join(', '))}` : ''}</small>
+        <small>${esc(it.reason || '')}</small>
+        ${it.guesses && it.guesses.length ? `<div class="ib-maybe"><span class="ib-maybe-l">${it.guesses.length > 1 ? 'Maybe one of these. Tap a name to pin it:' : 'Maybe this one. Tap it to pin it:'}</span><div class="ib-gs">${
+          it.guesses.slice(0, ibOpen.has(it.id) ? 30 : 6).map((g,i)=>`<span class="ib-g"><button type="button" class="ib-gname" data-g="${i}" title="Pin ${esc(g.name)}">📍<span>${esc(g.name)}</span></button><a class="ib-gmap" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([g.name, g.city].filter(Boolean).join(' '))}" target="_blank" rel="noopener noreferrer" aria-label="Find ${esc(g.name)} on Google Maps" title="Find on Google Maps">${GMAPS_SVG}</a></span>`).join('')
+        }${it.guesses.length > 6 && !ibOpen.has(it.id) ? `<button type="button" class="ib-gmore" data-gmore>+${it.guesses.length - 6} more</button>` : ''}</div></div>` : ''}
         ${canHint && it.source!=='instagram' ? `<form class="ib-hint" data-hint><input type="text" placeholder="Name, comment, or Google Maps link" aria-label="Place name, the comment that mentions it, or a Google Maps link" value="${esc(ibDraft[it.id] ?? it.hint ?? '')}" maxlength="400"><button type="submit" class="pc-btn">Find</button></form>
         <div class="ib-msg${ibBusy.has(it.id) ? ' busy' : ''}" role="status">${ibBusy.has(it.id) ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}<span>${esc(ibMsg[it.id] || '')}</span></div>` : ''}
         <div class="ib-acts">${canHint && it.source!=='instagram' ? '<button type="button" class="pc-btn" data-a="retry">↻ Try again</button>' : ''}<button type="button" class="pc-btn pc-main" data-a="pin">Pin it</button>
           <a class="pc-btn" href="${esc(safeHref(it.url || '') || '#')}" target="_blank" rel="noopener noreferrer">Watch</a>
-          ${(it.guesses && it.guesses.length) || (it.area && it.area.name) ? `<a class="pc-btn" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(it.guesses && it.guesses.length ? [it.guesses[0].name, it.guesses[0].city].filter(Boolean).join(' ') : it.area.name)}" target="_blank" rel="noopener noreferrer">${GMAPS_SVG}Find on Google Maps</a>` : ''}
+          ${!(it.guesses && it.guesses.length) && it.area && it.area.name ? `<a class="pc-btn" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(it.area.name)}" target="_blank" rel="noopener noreferrer">${GMAPS_SVG}Find on Google Maps</a>` : ''}
           <button type="button" class="pc-btn" data-a="rm">Remove</button></div></div></div>`).join('');
   list.querySelectorAll('.ib-row').forEach(row=>{
     const it = inbox.find(x=>x.id===row.dataset.id);
     const busy = ibBusy.has(it.id);
     row.querySelector('[data-a=pin]').onclick = ()=>pinFromInbox(it);
     const rmB = row.querySelector('[data-a=rm]'); rmB.disabled = busy; rmB.onclick = ()=>{ if(!ibBusy.has(it.id)) removeInbox(it); };
+    row.querySelectorAll('[data-g]').forEach(b=>{ b.disabled = busy; b.onclick = ()=>pinFromInbox(it, false, +b.dataset.g); });
+    const more = row.querySelector('[data-gmore]'); if(more) more.onclick = ()=>{ ibOpen.add(it.id); renderPlaces(); };
     // tap an entry: the map shows its city
     if(it.area && it.area.lat!=null) row.classList.add('ib-has-area');
     row.onclick = e=>{
@@ -6524,14 +6580,22 @@ function flyToArea(area){
   if(!area || !validLatLng(area.lat, area.lng) || !plMap) return;
   plMap.flyTo(area.lat, area.lng, /,/.test(area.name || '') ? 12 : 6);
 }
-function pinFromInbox(it, noSearch){
+function pinFromInbox(it, noSearch, gi){
   plShowInbox = false;
   startAddPlace();
   plPick.srcLink = it.url || ''; plPick.inboxId = it.id;
   if(it.area && validLatLng(it.area.lat, it.area.lng)) plMap.setView(it.area.lat, it.area.lng, 13);   // start in its city
-  const guess = it.guesses && it.guesses[0];
-  if(noSearch) return;
-  if(guess){ searchPlacesByName([guess.name, guess.city].filter(Boolean).join(' ')); }
+  const guess = it.guesses && it.guesses[gi || 0];
+  if(noSearch){                                       // a Google Maps link pasted for this video
+    if(it.guesses && it.guesses.length > 1) plPick.keepInbox = true;   // can't tell which name it was: keep the others
+    return;
+  }
+  if(guess){ plPick.guessName = guess.name; }           // saving it takes just this name off the Inbox entry
+  if(guess){
+    // the local-language name finds more in places like China; the English name stays the place's name
+    searchPlacesByName(guess.local || [guess.name, guess.city].filter(Boolean).join(' '));
+    plPick.inText = guess.name; renderPickBar();
+  }
   else { plPick.msg = 'Type the place’s name, or tap the map. The video link will be saved with it.'; renderPickBar(); }
 }
 async function removeInbox(it){
@@ -6964,9 +7028,19 @@ async function savePlace(){
       if(plDraft.osm){ data.osm = plDraft.osm; if(plDraft.info) data.info = plDraft.info; data.osmCheckedAt = data.updatedAt; }
       const ref = await db.collection('places').add(data);
       if(!places.some(x=>x.id===ref.id)) places.push({id:ref.id, ...data});
-      const fromInbox = plPick && plPick.inboxId;
+      const fromInbox = plPick && !plPick.keepInbox && plPick.inboxId, guessName = plPick && plPick.guessName;
       plPick = null; closePlaceForm(); selectPlace(ref.id);
-      if(fromInbox) db.collection('inbox').doc(fromInbox).delete().catch(()=>{});
+      if(fromInbox){
+        const ib = inbox.find(x=>x.id===fromInbox);
+        const rest = ib && guessName && ib.guesses ? ib.guesses.filter(g=>g.name !== guessName) : [];
+        if(rest.length){                                  // others from the same video still to pin
+          ib.guesses = rest;
+          db.collection('inbox').doc(fromInbox).update({guesses: rest}).catch(()=>{});
+        } else {
+          inbox = inbox.filter(x=>x.id!==fromInbox);
+          db.collection('inbox').doc(fromInbox).delete().catch(()=>{});
+        }
+      }
       offerUndo(`“${name}” added to your map.`, async ()=>{ await restoreDoc('places', ref.id, null); if(plSel===ref.id) plSel = null; renderPlaces(); });
     }
   }catch(e){ err.textContent = 'Could not save. Please try again.'; }
