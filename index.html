@@ -1322,6 +1322,12 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pc-review{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;padding:8px 10px;border-radius:6px;
     background:color-mix(in srgb, var(--accent) 12%, transparent);font-family:-apple-system,sans-serif;font-size:0.8rem;}
   .pc-review .pc-btn{padding:5px 10px;font-size:0.78rem;}
+  .pv-sib{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:8px;font-family:-apple-system,sans-serif;font-size:0.78rem;}
+  .pv-sib > span{color:var(--muted);margin-right:2px;}
+  .pv-sib-b{padding:3px 9px;border:1px solid var(--line);border-radius:999px;background:var(--paper);color:var(--ink);font-size:0.78rem;cursor:pointer;
+    max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .pv-sib-b:hover{border-color:var(--accent);}
+  #detailPanel .pv-sib{margin:4px 0 12px;}
   .pv{display:flex;gap:10px;margin-top:8px;font-family:-apple-system,sans-serif;font-size:0.8rem;}
   .pv img{flex:0 0 48px;width:48px;height:64px;border-radius:5px;object-fit:cover;background:var(--line);}
   .pv.big img{flex-basis:84px;width:84px;height:112px;}
@@ -6339,6 +6345,7 @@ function renderPlaceCard(){
     ${closedNote(p) ? `<div class="pc-warn">${esc(closedNote(p))}</div>` : ''}
     ${p.review ? `<div class="pc-review">Added from ${esc(socialName(p.link || ''))}. Is the pin in the right place? <button type="button" class="pc-btn" data-a="ok">✓ Looks right</button><button type="button" class="pc-btn" data-a="move">Move pin</button></div>` : ''}
     ${p.review ? fromVideoHTML(p, false) : ''}
+    ${siblingsHTML(p, false)}
     ${p.note ? `<div class="pc-note">${esc(p.note)}</div>` : ''}
     <div class="pc-acts">
       <a class="pc-btn pc-main" href="${esc(gmapsHref(p))}" target="_blank" rel="noopener noreferrer">${GMAPS_SVG}Google Maps</a>
@@ -6349,6 +6356,7 @@ function renderPlaceCard(){
   card.querySelector('[data-a=open]').onclick = ()=>openPlaceDetail(p.id);
   const ok = card.querySelector('[data-a=ok]'); if(ok) ok.onclick = ()=>reviewedPlace(p.id);
   const mv = card.querySelector('[data-a=move]'); if(mv) mv.onclick = ()=>startMovePlace(p.id);
+  wireSiblings(card, p);
 }
 // a place tapped on the map that isn't one of yours yet: what it is, and a button to save it
 function renderPoiCard(card){
@@ -6417,6 +6425,20 @@ async function reviewedPlace(id){
   const p = places.find(x=>x.id===id); if(!p) return;
   try{ await db.collection('places').doc(id).update({review:false}); p.review = false; renderPlaces(); refreshOpenDetail('places', id); }
   catch(e){ toast("Couldn't save that. Try again."); }
+}
+// the other places saved from the same video
+function videoSiblings(p){
+  if(!p || !(p.srcId || /tiktok\.|instagram\./i.test(p.link || ''))) return [];
+  return places.filter(x=>x.id!==p.id && (p.srcId ? x.srcId===p.srcId : x.link===p.link));
+}
+function siblingsHTML(p, full){
+  const sib = videoSiblings(p); if(!sib.length) return '';
+  const shown = full ? sib : sib.slice(0, 3), more = sib.length - shown.length;
+  return `<div class="pv-sib${full ? ' full' : ''}"><span>🎬 Also from this video:</span>${shown.map(x=>`<button type="button" class="pv-sib-b" data-sib="${esc(x.id)}">${esc(placeEmoji(x))} ${esc(x.name || 'Place')}</button>`).join('')}${more ? `<button type="button" class="pv-sib-b" data-sibmore>+${more} more</button>` : ''}</div>`;
+}
+function wireSiblings(root, p){
+  root.querySelectorAll('[data-sib]').forEach(b=>b.onclick = ()=>{ closeDetail(); selectPlace(b.dataset.sib, {pan:true}); if(!isWide()) togglePlacesList(false); });
+  const more = root.querySelector('[data-sibmore]'); if(more) more.onclick = ()=>openPlaceDetail(p.id);
 }
 function fromVideoHTML(p, big){
   if(!p.thumbUrl && !p.caption && p.source!=='tiktok') return '';
@@ -6954,6 +6976,7 @@ function openPlaceDetail(id){
     ${closedNote(p) ? `<div class="needs-box">${esc(closedNote(p))}${p.osmCheckedAt ? ` (checked ${esc(fmtDate(String(p.osmCheckedAt).slice(0,10)))})` : ''}.<button type="button" onclick="ignoreClosed('${esc(p.id)}')">It's still open</button></div>` : ''}
     ${p.review ? `<div class="pc-review">Added from ${esc(socialName(p.link || ''))}. Is the pin in the right place? <button type="button" class="pc-btn" onclick="reviewedPlace('${esc(p.id)}')">✓ Looks right</button></div>` : ''}
     ${fromVideoHTML(p, true)}
+    ${siblingsHTML(p, true)}
     <div class="desc">${p.note ? esc(p.note) : '<span style="color:var(--muted)">No notes yet.</span>'}</div>
     ${placeInfoHTML(p.info, true)}
     ${link ? `<a class="detail-link" href="${esc(link)}" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4h5v5M16 4l-7 7M14 11.5V16H4V6h4.5"/></svg><span>Where I found it${/tiktok\./i.test(link) ? ' (TikTok)' : /instagram\./i.test(link) ? ' (Instagram)' : ''}</span></a>` : ''}
@@ -6973,6 +6996,7 @@ function openPlaceDetail(id){
       <button class="del" onclick="deletePlace('${esc(p.id)}')">Delete</button>
     </div>`;
   const ov = document.getElementById('detailOverlay'); ov.dataset.col='places'; ov.dataset.id=p.id; ov.classList.add('show');
+  wireSiblings(document.getElementById('detailPanel'), p);
 }
 async function togglePlaceStatus(id){
   const p = places.find(x=>x.id===id); if(!p) return;

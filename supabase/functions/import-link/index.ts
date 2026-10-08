@@ -208,11 +208,11 @@ Separately, say which city or area (and country) the post is in, if that is clea
 
 Answer with JSON only, nothing else:
 {"places":[{"name":"exact place name","local_name":"the name in the local language and script if you know it (e.g. Chinese characters), else empty","city":"city","country":"country","address":"street address if stated, else empty","kind":"one word: cafe/restaurant/bar/bakery/shop/hotel/museum/viewpoint/park/beach/hike/attraction/other","sure":0.0}],"area":{"city":"city or area, else empty","country":"country, else empty"},"about":"what the post is about, max 10 words"}
-"sure" is how certain you are (0 to 1) that this exact place is meant. At most 10 places.` });
+"sure" is how certain you are (0 to 1) that this exact place is meant. List every place the post recommends, at most 30.` });
   const r = await fetchFn('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ model: MODEL, max_tokens: 700, messages: [{ role: 'user', content }] }),
+    body: JSON.stringify({ model: MODEL, max_tokens: 2500, messages: [{ role: 'user', content }] }),
   });
   if (!r.ok) throw new Error('claude ' + r.status + ' ' + (await r.text()).slice(0, 200));
   const j = await r.json();
@@ -220,7 +220,7 @@ Answer with JSON only, nothing else:
   const s = text.indexOf('{'), e = text.lastIndexOf('}');
   const parsed = s >= 0 && e > s ? JSON.parse(text.slice(s, e + 1)) : { places: [] };
   const area = parsed.area && (parsed.area.city || parsed.area.country) ? { city: String(parsed.area.city || ''), country: String(parsed.area.country || '') } : null;
-  return { places: Array.isArray(parsed.places) ? parsed.places.slice(0, 10) : [], area, about: String(parsed.about || ''), usage: j.usage || null };
+  return { places: Array.isArray(parsed.places) ? parsed.places.slice(0, 30) : [], area, about: String(parsed.about || ''), usage: j.usage || null };
 }
 
 // ---------------- finding a place on the map ----------------
@@ -294,6 +294,7 @@ const withTimeout = (fn: typeof fetch, ms: number) => ((input: any, init: any = 
 export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fetch): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   fetchFn = withTimeout(fetchFn, 25000);
+  const started = Date.now();
   if (req.method !== 'POST') return reply({ ok: false, error: 'Use POST' }, 405);
   const db = sb(env, fetchFn);
 
@@ -370,9 +371,11 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
   guesses = guesses.filter((g) => g && g.name && (g.sure == null || g.sure >= 0.5));
 
   const now = new Date().toISOString(), added: Json[] = [], missed: Json[] = [];
-  for (const g of guesses) {
+  // look several places up at the same time; if time runs short, the rest go to the Inbox (nothing is lost)
+  const one = async (g: Json) => {
+    if (Date.now() - started > 95000) { missed.push(g); return; }
     const at = await locate(g, fetchFn);
-    if (!at) { missed.push(g); continue; }
+    if (!at) { missed.push(g); return; }
     const id = newId();
     await db.save(uid, 'places', id, {
       name: String(g.name).slice(0, 120), emoji: emojiFor(g.kind), color: 'red', status: 'want', note: '',
@@ -382,7 +385,8 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
       createdAt: now, updatedAt: now,
     });
     added.push({ id, name: g.name });
-  }
+  };
+  for (let i = 0; i < guesses.length; i += 5) await Promise.all(guesses.slice(i, i + 5).map(one));
   // where roughly: the city, so "Pin it" can start there
   let areaAt: Json = null;
   if (area && (area.city || area.country)) {
@@ -397,15 +401,15 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
     await db.save(uid, 'inbox', inbox, {
       url: canon, source: 'tiktok', srcId, caption: String(post.caption || '').slice(0, 400), author: post.author || '', thumbUrl, about,
       ...(areaAt ? { area: areaAt } : {}), ...(hint ? { hint } : {}),
-      guesses: missed.map((g) => ({ name: g.name, city: g.city || '', ...(g.local_name ? { local: g.local_name } : {}) })).slice(0, 5),
+      guesses: missed.map((g) => ({ name: g.name, city: g.city || '', ...(g.local_name ? { local: g.local_name } : {}) })).slice(0, 30),
       reason: !guesses.length ? (aiError ? "Couldn't read it this time." : !key ? 'The AI key is missing, and the video has no location tag.'
           : hint ? "Still couldn't tell which place it is." : "Couldn't tell which place it is.")
-        : added.length ? `Found ${added.length}, but couldn't find ${missed.map((g) => g.name).join(', ')} on the map.` : "Couldn't find it on the map.",
+        : added.length ? `Found ${added.length}, but couldn't find ${missed.length > 3 ? missed.length + ' others' : missed.map((g) => g.name).join(', ')} on the map.` : "Couldn't find it on the map.",
       createdAt: now,
     });
   }
   const message = added.length
-    ? `Added ${added.map((a) => a.name).join(', ')} to your map${inbox ? ' (some went to the Inbox)' : ''}.`
+    ? `Added ${added.length > 3 ? added.length + ' places' : added.map((a) => a.name).join(', ')} to your map${inbox ? ' (some went to the Inbox)' : ''}.`
     : `Couldn't place it${areaAt ? ` (somewhere in ${areaAt.name})` : ''}, so it's in your Inbox.`;
   return reply({ ok: true, added, inbox: inbox || null, area: areaAt, message,
     debug: { caption: !!post.caption, poi: !!post.poi, thumb: !!thumb, comments: (post.comments || []).length, ai: key ? (aiError || 'ok') : 'no key' } });
