@@ -1,0 +1,31 @@
+name: diag
+on:
+  push:
+    branches: [diag]
+jobs:
+  look:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          npm i -s @mapbox/vector-tile@2 pbf@4 >/dev/null 2>&1
+          cat > d.mjs <<'JS'
+          import { VectorTile } from '@mapbox/vector-tile'; import Pbf from 'pbf';
+          const L=(...a)=>console.log('::notice::'+a.map(x=>String(x)).join(' ').replace(/%/g,'%25').replace(/\n/g,'%0A'));
+          const K='Sj7uPgiD4robO84xYBok';
+          const st=await (await fetch(`https://api.maptiler.com/maps/streets-v2/style.json?key=${K}`)).json();
+          const tf=new Map(); for(const l of st.layers){ const t=l.layout&&l.layout['text-field']; if(t){ const k=JSON.stringify(t); tf.set(k,(tf.get(k)||[]).concat(l.id)); } }
+          L('SOURCES '+JSON.stringify(Object.fromEntries(Object.entries(st.sources).map(([k,v])=>[k,v.url||v.tiles]))));
+          L('TEXT FIELDS\n'+[...tf].map(([k,v])=>k.slice(0,300)+'  <= '+v.length+' layers e.g. '+v.slice(0,4).join(',')).join('\n'));
+          L('FONTS '+JSON.stringify([...new Set(st.layers.map(l=>JSON.stringify(l.layout&&l.layout['text-font'])).filter(Boolean))].slice(0,6)));
+          // a tile over central Chongqing, z14
+          const z=14, lat=29.565, lng=106.58; const n=2**z; const x=Math.floor((lng+180)/360*n); const y=Math.floor((1-Math.log(Math.tan(lat*Math.PI/180)+1/Math.cos(lat*Math.PI/180))/Math.PI)/2*n);
+          const tj=await (await fetch(`https://api.maptiler.com/tiles/v3/tiles.json?key=${K}`)).json();
+          const url=tj.tiles[0].replace('{z}',z).replace('{x}',x).replace('{y}',y);
+          const buf=new Uint8Array(await (await fetch(url)).arrayBuffer());
+          const vt=new VectorTile(new Pbf(buf)); const out=[];
+          for (const ln of ['poi','place','transportation_name','water_name']){ const lay=vt.layers[ln]; if(!lay) continue; const keys=new Set(); const ex=[];
+            for(let i=0;i<lay.length;i++){ const p=lay.feature(i).properties; Object.keys(p).filter(k=>k.startsWith('name')).forEach(k=>keys.add(k)); if(ex.length<4 && p.name) ex.push(JSON.stringify(Object.fromEntries(Object.entries(p).filter(([k])=>k.startsWith('name'))))); }
+            out.push(`${ln}: ${lay.length} feats, name keys: ${[...keys].join(',')}\n  `+ex.join('\n  ')); }
+          L('TILE '+url.replace(K,'KEY')+'\n'+out.join('\n'));
+          JS
+          node d.mjs
