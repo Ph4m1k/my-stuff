@@ -137,6 +137,16 @@ async function readTikTok(link: string, fetchFn: typeof fetch) {
     out.finalUrl = r.url || link; out.id = out.id || videoId(out.finalUrl);
     html = await r.text();
   } catch (_) { /* the oEmbed below may still work */ }
+  // photo slideshows: TikTok leaves the description out of the /photo/ page and refuses it in oEmbed,
+  // but gives the full post when asked for the same number as a /video/ address
+  const photo = /^(https:\/\/www\.tiktok\.com\/@[^/?#]+)\/photo\/(\d{8,})/.exec(out.finalUrl) || /^(https:\/\/www\.tiktok\.com\/@[^/?#]+)\/photo\/(\d{8,})/.exec(link);
+  if (photo) {
+    out.finalUrl = `${photo[1]}/video/${photo[2]}`; out.id = out.id || photo[2]; out.photo = true;
+    try {
+      const r = await fetchFn(out.finalUrl, { headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9' }, redirect: 'follow' });
+      if (r.ok) html = await r.text();
+    } catch (_) { /* keep what we have */ }
+  }
   try {
     const r = await fetchFn(`https://www.tiktok.com/oembed?url=${encodeURIComponent(out.finalUrl)}`, { headers: { 'User-Agent': UA } });
     if (r.ok) {
@@ -327,15 +337,23 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
   if (!isTikTok(link)) return reply({ ok: false, error: "That's not a TikTok link." }, 400);
 
   const post = await readTikTok(link, fetchFn);
-  const canon = post.id ? `https://www.tiktok.com/@${post.author || '_'}/video/${post.id}` : post.finalUrl;
+  const canon = post.id ? `https://www.tiktok.com/@${post.author || '_'}/${post.photo ? 'photo' : 'video'}/${post.id}` : post.finalUrl;
   const srcId = post.id ? 'tiktok:' + post.id : '';
 
-  // shared it before? don't add it twice (unless you're helping with an Inbox entry)
-  const already = inboxId ? [] : await db.find(uid, srcId, link);
-  if (already.length) {
-    const names = already.filter((r: Json) => r.col === 'places').map((r: Json) => r.data.name);
-    return reply({ ok: true, duplicate: true, added: [], message: names.length ? `Already on your map: ${names.join(', ')}` : 'Already in your Inbox.' });
+  // shared it before? a second tap within 2 minutes is a double tap: stop there.
+  // Later, sharing it again means "look again": only places not on the map yet are added.
+  const already: Json[] = await db.find(uid, srcId, link);
+  const havePlaces = already.filter((r: Json) => r.col === 'places');
+  const oldInbox = already.find((r: Json) => r.col === 'inbox');
+  if (!inboxId && already.length) {
+    const fresh = already.some((r: Json) => Date.now() - Date.parse(r.data?.createdAt || '') < 120000);
+    if (fresh) {
+      const names = havePlaces.map((r: Json) => r.data.name);
+      return reply({ ok: true, duplicate: true, added: [], message: names.length ? `Already on your map: ${names.join(', ')}` : 'Already in your Inbox.' });
+    }
+    if (oldInbox) inboxId = oldInbox.id;                // reuse its Inbox entry instead of making a second one
   }
+  const onMap = (n: string) => havePlaces.some((r: Json) => nameScore(n, r.data?.name || '') >= 0.8);
 
   // keep a copy of the cover picture (TikTok's own picture links expire)
   let thumb: { b64: string; type: string; bytes: Uint8Array } | null = null;
@@ -369,6 +387,9 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
     guesses.unshift({ name: post.poi.name, city: post.poi.city, country: post.poi.country, address: post.poi.address, kind: post.poi.kind, sure: 0.95 });
   }
   guesses = guesses.filter((g) => g && g.name && (g.sure == null || g.sure >= 0.5));
+  const before = guesses.length;
+  guesses = guesses.filter((g) => !onMap(g.name));      // already on your map from this post
+  const skipped = before - guesses.length;
 
   const now = new Date().toISOString(), added: Json[] = [], missed: Json[] = [];
   // look several places up at the same time; if time runs short, the rest go to the Inbox (nothing is lost)
@@ -395,6 +416,10 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
     if (f && f.center) areaAt = { name, lat: f.center[1], lng: f.center[0] };
   }
   let inbox = '';
+  if (skipped && !guesses.length) {                     // nothing new in it
+    if (inboxId) await db.remove(uid, 'inbox', inboxId);
+    return reply({ ok: true, duplicate: true, added: [], message: `Nothing new. Already on your map: ${havePlaces.map((r: Json) => r.data.name).join(', ')}` });
+  }
   if (inboxId && added.length && !missed.length) await db.remove(uid, 'inbox', inboxId);       // helped: it's on the map now
   if (!added.length || missed.length) {
     inbox = inboxId || newId();

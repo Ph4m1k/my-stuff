@@ -1315,8 +1315,16 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .ib-hint input{flex:1;min-width:0;padding:6px 8px;border:1px solid var(--line);border-radius:4px;background:var(--paper);color:var(--ink);font-size:0.8rem;}
   .ib-hint .pc-btn{padding:5px 10px;font-size:0.78rem;}
   .ib-msg{margin-top:4px;font-size:0.74rem;color:var(--accent);}
-  .ib-msg:empty{display:none;}
+  .ib-msg:empty, .ib-msg:not(.busy):has(> span:empty){display:none;}
   .ib-acts .pc-btn{padding:5px 10px;font-size:0.78rem;}
+  .ib-row .pc-btn:disabled, .ib-row input:disabled{opacity:.45;cursor:not-allowed;}
+  .ib-row.ib-busy .ib-img{position:relative;}
+  .busy-spin{display:inline-block;flex:0 0 auto;width:13px;height:13px;margin-right:6px;vertical-align:-2px;border:2px solid color-mix(in srgb, var(--accent) 30%, transparent);border-top-color:var(--accent);border-radius:50%;animation:plSpin .8s linear infinite;}
+  .ib-msg.busy, .pp-msg.busy{display:flex;align-items:flex-start;}
+  .ib-msg.busy .busy-spin, .pp-msg.busy .busy-spin{margin-top:1px;}
+  .ib-row.ib-busy .ib-noimg, .ib-row.ib-busy img.ib-img{animation:ibPulse 1.4s ease-in-out infinite;}
+  @keyframes ibPulse{50%{opacity:.45;}}
+  @media (prefers-reduced-motion:reduce){ .busy-spin{animation-duration:2.4s;} .ib-row.ib-busy .ib-noimg, .ib-row.ib-busy img.ib-img{animation:none;} }
   .pl-review{color:var(--accent);font-weight:600;}
   .pm-pin.review .pm-dot{border-style:dashed;}
   .pc-review{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:8px;padding:8px 10px;border-radius:6px;
@@ -6452,21 +6460,22 @@ function renderInbox(list){
   const act = document.activeElement, typingIn = act && act.closest && act.closest('.ib-row') && act.tagName==='INPUT' ? act.closest('.ib-row').dataset.id : null;
   const caret = typingIn ? act.selectionStart : 0;
   if(!inbox.length){ list.innerHTML = '<div class="notes-empty">Your Inbox is empty.</div>'; return; }
-  list.innerHTML = `<div class="ib-head">Links I couldn't place by myself. Pin them, or remove them.</div>` + inbox.map(it=>`<div class="ib-row" data-id="${esc(it.id)}">
+  list.innerHTML = `<div class="ib-head">Links I couldn't place by myself. Pin them, or remove them.</div>` + inbox.map(it=>`<div class="ib-row${ibBusy.has(it.id) ? ' ib-busy' : ''}" data-id="${esc(it.id)}" aria-busy="${ibBusy.has(it.id)}">
       ${it.thumbUrl ? `<img class="ib-img" src="${esc(it.thumbUrl)}" alt="" loading="lazy">` : `<span class="ib-img ib-noimg">${it.source==='instagram' ? '📷' : '🎬'}</span>`}
       <div class="ib-t"><b>${esc(it.caption || it.about || socialName(it.url || '') + ' link')}</b>
         ${it.area && it.area.name ? `<div class="ib-area">📍 Somewhere in ${esc(it.area.name)}</div>` : ''}
         <small>${esc(it.reason || '')}${it.guesses && it.guesses.length ? ` Maybe: ${esc(it.guesses.map(g=>g.name).join(', '))}` : ''}</small>
         ${canHint && it.source!=='instagram' ? `<form class="ib-hint" data-hint><input type="text" placeholder="Name, comment, or Google Maps link" aria-label="Place name, the comment that mentions it, or a Google Maps link" value="${esc(ibDraft[it.id] ?? it.hint ?? '')}" maxlength="400"><button type="submit" class="pc-btn">Find</button></form>
-        <div class="ib-msg" role="status">${esc(ibMsg[it.id] || '')}</div>` : ''}
+        <div class="ib-msg${ibBusy.has(it.id) ? ' busy' : ''}" role="status">${ibBusy.has(it.id) ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}<span>${esc(ibMsg[it.id] || '')}</span></div>` : ''}
         <div class="ib-acts">${canHint && it.source!=='instagram' ? '<button type="button" class="pc-btn" data-a="retry">↻ Try again</button>' : ''}<button type="button" class="pc-btn pc-main" data-a="pin">Pin it</button>
           <a class="pc-btn" href="${esc(safeHref(it.url || '') || '#')}" target="_blank" rel="noopener noreferrer">Watch</a>
           ${(it.guesses && it.guesses.length) || (it.area && it.area.name) ? `<a class="pc-btn" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(it.guesses && it.guesses.length ? [it.guesses[0].name, it.guesses[0].city].filter(Boolean).join(' ') : it.area.name)}" target="_blank" rel="noopener noreferrer">${GMAPS_SVG}Find on Google Maps</a>` : ''}
           <button type="button" class="pc-btn" data-a="rm">Remove</button></div></div></div>`).join('');
   list.querySelectorAll('.ib-row').forEach(row=>{
     const it = inbox.find(x=>x.id===row.dataset.id);
+    const busy = ibBusy.has(it.id);
     row.querySelector('[data-a=pin]').onclick = ()=>pinFromInbox(it);
-    row.querySelector('[data-a=rm]').onclick = ()=>removeInbox(it);
+    const rmB = row.querySelector('[data-a=rm]'); rmB.disabled = busy; rmB.onclick = ()=>{ if(!ibBusy.has(it.id)) removeInbox(it); };
     // tap an entry: the map shows its city
     if(it.area && it.area.lat!=null) row.classList.add('ib-has-area');
     row.onclick = e=>{
@@ -6474,7 +6483,7 @@ function renderInbox(list){
       flyToArea(it.area);
       if(!isWide()) togglePlacesList(false);
     };
-    const rt = row.querySelector('[data-a=retry]'); if(rt){ rt.disabled = ibBusy.has(it.id); rt.onclick = ()=>helpInbox(it, '', true); }
+    const rt = row.querySelector('[data-a=retry]'); if(rt){ rt.disabled = busy; if(busy) rt.textContent = 'Working…'; rt.onclick = ()=>helpInbox(it, '', true); }
     const f = row.querySelector('[data-hint]');
     if(f){
       const inp = f.querySelector('input'), btn = f.querySelector('button');
@@ -6825,7 +6834,7 @@ function renderPickBar(){
     bar.innerHTML = `<div class="pp-t"><b>Search</b> for the place, paste a Google Maps${canImport ? ' or TikTok' : ''} link, or <b>tap the map</b></div>
       <div class="pp-row"><input id="plPickIn" type="search" enterkeyhint="search" placeholder="e.g. Café Savoy Praha" autocomplete="off" aria-label="Place name or Google Maps link" value="${esc(plPick.inText||'')}">
       <button type="button" class="pp-go">${plPick.searching ? '…' : 'Find'}</button><button type="button" class="pp-cancel">Cancel</button></div>
-      ${plPick.msg ? `<div class="pp-msg">${esc(plPick.msg)}</div>` : ''}
+      ${plPick.msg ? `<div class="pp-msg${plPick.importing ? ' busy' : ''}" role="status">${plPick.importing ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}<span>${esc(plPick.msg)}</span></div>` : ''}
       ${res ? `<div class="pp-results">${res.length ? res.map((r,i)=>`<button type="button" data-i="${i}"><span class="rr-e">${esc(r.emoji)}</span><span class="rr-t"><b>${esc(r.name)}</b><small>${esc([r.kind, r.address].filter(Boolean).join(' · '))}</small></span></button>`).join('')
         : '<div class="pp-none">Nothing found. Try adding the city, or tap the map.</div>'}</div>` : ''}`;
     const inp = bar.querySelector('#plPickIn');
