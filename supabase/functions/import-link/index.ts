@@ -229,7 +229,8 @@ Separately, say which city or area (and country) the post is in, if that is clea
 
 Answer with JSON only, nothing else:
 {"places":[{"name":"exact place name","local_name":"the name in the local language and script if you know it (e.g. Chinese characters), else empty","city":"city","country":"country","address":"street address if stated, else empty","kind":"one word: cafe/restaurant/bar/bakery/shop/hotel/museum/viewpoint/park/beach/hike/attraction/other","sure":0.0}],"area":{"city":"city or area, else empty","country":"country, else empty"},"about":"what the post is about, max 10 words"}
-"sure" is how certain you are (0 to 1) that this exact place is meant. List every place the post recommends, at most 30.` });
+"sure" is how certain you are (0 to 1) that this exact place is meant. List every place the post recommends, at most 30.
+For "city", give the town or district each place is actually in. For a day trip outside the main city (a national park, a nearby old town), give that place's own town, not the main city.` });
   const r = await fetchFn('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
