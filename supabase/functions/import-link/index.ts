@@ -29,10 +29,13 @@ function nameScore(want: string, got: string): number {
   const a = fold(want), b = fold(got);
   if (!a || !b) return 0;
   if (a === b) return 1;
-  if ((a.length >= 4 && b.includes(a)) || (b.length >= 4 && a.includes(b))) return 0.85;
+  // one name inside the other ("Café Savoy" / "Savoy") counts only when it's most of it: "Square" is not "Chaotianmen Square"
+  const [sh, lo] = a.length <= b.length ? [a, b] : [b, a];
+  const mostOf = sh.length / lo.length >= 0.5;
+  if (mostOf && sh.length >= 4 && lo.includes(sh)) return 0.85;
   // Chinese, Japanese, Thai… have no spaces between words: compare pairs of letters instead
   if (!/[a-z0-9]/.test(a + b)) {
-    if (a.length >= 2 && (b.includes(a) || a.includes(b))) return 0.85;
+    if (mostOf && sh.length >= 2 && lo.includes(sh)) return 0.85;
     const pairs = (x: string) => { const o: string[] = []; const t = x.replace(/ /g, ''); for (let i = 0; i < t.length - 1; i++) o.push(t.slice(i, i + 2)); return o; };
     const pa = pairs(a), pb = pairs(b); if (!pa.length || !pb.length) return 0;
     let c = 0; const left = [...pb]; pa.forEach((x) => { const i = left.indexOf(x); if (i >= 0) { c++; left.splice(i, 1); } });
@@ -277,16 +280,29 @@ async function overpass(q: string, fetchFn: typeof fetch) {
   }
   return [];
 }
-async function locate(p: Json, fetchFn: typeof fetch) {
+const cities = new Map<string, Promise<{ lat: number; lng: number } | null>>();
+function cityCentre(where: string, fetchFn: typeof fetch) {
+  if (!cities.has(where)) cities.set(where, (async () => {
+    const f = (await maptiler(where, fetchFn, '&types=municipality,locality,place'))[0] || (await maptiler(where, fetchFn))[0];
+    return f && f.center ? { lat: f.center[1], lng: f.center[0] } : null;
+  })().catch(() => null));
+  return cities.get(where)!;
+}
+export async function locate(p: Json, fetchFn: typeof fetch) {
   const name = String(p.name || '').trim(); if (!name) return null;
   const local = String(p.local_name || '').trim();
   const names = [name, ...(local && local !== name ? [local] : [])];
   const where = [p.city, p.country].filter(Boolean).join(', ');
+  // where the city is: every answer must be around there (a "老君洞" exists in several provinces)
+  const city = p.city ? await cityCentre(where, fetchFn) : null;
+  const nearCity = (lng: number, lat: number) => !city || metres(city.lat, city.lng, lat, lng) <= 45000;
   // 1) the map search: "Name, street, City, Country" (and the same with the local name)
   let best: Json = null, bestScore = 0;
   for (const n of names) {
     const feats = await maptiler([n, p.address, where].filter(Boolean).join(', '), fetchFn);
     for (const f of feats) {
+      if (!f.center || !nearCity(f.center[0], f.center[1])) continue;
+      if (['region', 'country', 'municipality', 'county', 'joint_municipality', 'joint_submunicipality', 'municipal_district'].some((t) => (f.place_type || []).includes(t))) continue;  // a town is not a place to visit
       const s = Math.max(...names.map((x) => nameScore(x, f.text || ''))) + ((f.place_type || []).includes('poi') ? 0.1 : 0)
         + (p.city && fold(f.place_name).includes(fold(p.city)) ? 0.1 : 0);
       if (s > bestScore) { bestScore = s; best = f; }
@@ -296,9 +312,8 @@ async function locate(p: Json, fetchFn: typeof fetch) {
   if (best && bestScore >= 0.8) return { lat: best.center[1], lng: best.center[0], address: best.place_name || '', how: 'map' };
   // 2) OpenStreetMap: a place with that name around the city
   if (p.city) {
-    const city = (await maptiler(where, fetchFn, '&types=municipality,locality,place,county,region'))[0] || (await maptiler(where, fetchFn))[0];
-    if (city && city.center) {
-      const [lng, lat] = city.center;
+    if (city) {
+      const { lat, lng } = city;
       // exact name matches (fast): the name as written, its English name, or the local name
       const keys = ['name', 'name:en', 'name:zh', 'name:ja', 'name:ko', 'name:th'];
       const variants = Array.from(new Set(names.flatMap((n) => [n, n.replace(/\b\w/g, (c) => c.toUpperCase())])));
@@ -398,6 +413,7 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
     }
     if (oldInbox) inboxId = oldInbox.id;                // reuse its Inbox entry instead of making a second one
   }
+  const moved: string[] = [];
   const onMap = (n: string) => havePlaces.some((r: Json) => nameScore(n, r.data?.name || '') >= 0.8);
 
   // keep a copy of the cover picture (TikTok's own picture links expire)
@@ -428,6 +444,21 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
   if (!area && post.poi && (post.poi.city || post.poi.country)) area = { city: post.poi.city, country: post.poi.country };
   // places without a city: use the post's city
   if (area) guesses.forEach((g) => { if (!g.city) g.city = area.city; if (!g.country) g.country = area.country; });
+  // where roughly: the city, so "Pin it" can start there
+  let areaAt: Json = null;
+  if (area && (area.city || area.country)) {
+    const name = [area.city, area.country].filter(Boolean).join(', ');
+    const c = await cityCentre(name, fetchFn);
+    if (c) areaAt = { name, lat: c.lat, lng: c.lng };
+  }
+  // pins from an earlier read that landed far outside the post's city (and you haven't checked yet): look them up again
+  if (areaAt && area.city) {
+    for (const r of havePlaces.filter((r: Json) => r.data?.review && r.data.lat != null && metres(areaAt.lat, areaAt.lng, r.data.lat, r.data.lng) > 60000)) {
+      await db.remove(uid, 'places', r.id);
+      havePlaces.splice(havePlaces.indexOf(r), 1);
+      moved.push(r.data.name);
+    }
+  }
   if (post.poi && !guesses.some((g) => nameScore(g.name, post.poi.name) >= 0.8)) {
     guesses.unshift({ name: post.poi.name, city: post.poi.city, country: post.poi.country, address: post.poi.address, kind: post.poi.kind, sure: 0.95 });
   }
@@ -453,13 +484,6 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
     added.push({ id, name: g.name });
   };
   for (let i = 0; i < guesses.length; i += 5) await Promise.all(guesses.slice(i, i + 5).map(one));
-  // where roughly: the city, so "Pin it" can start there
-  let areaAt: Json = null;
-  if (area && (area.city || area.country)) {
-    const name = [area.city, area.country].filter(Boolean).join(', ');
-    const f = (await maptiler(name, fetchFn))[0];
-    if (f && f.center) areaAt = { name, lat: f.center[1], lng: f.center[0] };
-  }
   let inbox = '';
   if (skipped && !guesses.length) {                     // nothing new in it
     if (inboxId) await db.remove(uid, 'inbox', inboxId);
@@ -478,9 +502,10 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
       createdAt: now,
     });
   }
-  const message = added.length
+  const fixed = moved.length ? `Took off ${moved.length} pin${moved.length > 1 ? 's' : ''} that landed in the wrong city. ` : '';
+  const message = fixed + (added.length
     ? `Added ${added.length > 3 ? added.length + ' places' : added.map((a) => a.name).join(', ')} to your map${inbox ? ' (some went to the Inbox)' : ''}.`
-    : `Couldn't place it${areaAt ? ` (somewhere in ${areaAt.name})` : ''}, so it's in your Inbox.`;
+    : `Couldn't place it${areaAt ? ` (somewhere in ${areaAt.name})` : ''}, so it's in your Inbox.`);
   return reply({ ok: true, added, inbox: inbox || null, area: areaAt, message,
     debug: { caption: !!post.caption, poi: !!post.poi, thumb: !!thumb, comments: (post.comments || []).length, ai: key ? (aiError || 'ok') : 'no key' } });
 }
