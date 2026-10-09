@@ -1697,6 +1697,16 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .ne-actions{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:0.8rem;color:var(--ink);}
   .ne-actions button{padding:5px 11px;border-radius:3px;border:1px solid var(--line);background:var(--paper);color:var(--ink);font-size:0.78rem;}
   .ne-actions .ne-del{color:#a13f3f;}
+  .ne-actions .ne-ren{display:inline-flex;align-items:center;gap:5px;}
+  .ne-name{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 16px;border-bottom:1px solid var(--line);font-size:0.82rem;}
+  .ne-name[hidden]{display:none;}
+  .ne-name .nn-l{color:var(--muted);font-size:0.74rem;text-transform:uppercase;letter-spacing:.04em;}
+  .ne-name .nn-t{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ne-name button{padding:4px 10px;border-radius:3px;border:1px solid var(--line);background:var(--paper);color:var(--ink);font-size:0.76rem;cursor:pointer;}
+  .ne-name form{display:flex;gap:6px;flex:1;min-width:0;}
+  .ne-name input{flex:1;min-width:0;padding:6px 8px;border:1px solid var(--line);border-radius:3px;background:var(--paper);color:var(--ink);font-size:0.86rem;}
+  .ne-name .nn-save{background:var(--accent);border-color:var(--accent);color:var(--paper);}
+  .ne-name small{flex-basis:100%;color:var(--muted);font-size:0.72rem;}
   .ne-actions .ne-yes{color:#a13f3f;border-color:#a13f3f;}
   #noteText{flex:1;min-height:0;width:100%;resize:none;border:none;outline:none;background:none;color:var(--ink);
     padding:22px 26px 40px;font-family:Georgia,'Iowan Old Style',serif;font-size:1.02rem;line-height:1.65;}
@@ -1792,7 +1802,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   #noteText ul[data-list="check"] > li[data-checked]{color:var(--muted);text-decoration:line-through;text-decoration-color:color-mix(in srgb, var(--muted) 70%, transparent);}
   #noteText ul[data-list="check"] > li[data-checked] li{color:var(--ink);text-decoration:none;}
   .note-row .ntasks{font-weight:500;color:var(--accent);margin-right:6px;}
-  @media (max-width:420px){ .ne-img span{display:none;} .ne-bar{gap:4px;padding-left:12px;} .ne-bar .ne-hbtn{width:28px;} .ne-actions{margin-left:4px !important;} .ne-img{margin-left:2px !important;} .ne-status:not(.err){display:none;} .ne-status.err{order:9;flex-basis:100%;} .ne-bar{flex-wrap:wrap;} }
+  @media (max-width:420px){ .ne-img span, .ne-ren span{display:none;} .ne-bar{gap:4px;padding-left:12px;} .ne-bar .ne-hbtn{width:28px;} .ne-actions{margin-left:4px !important;} .ne-img{margin-left:2px !important;} .ne-status:not(.err){display:none;} .ne-status.err{order:9;flex-basis:100%;} .ne-bar{flex-wrap:wrap;} }
   @media (max-width:859px){
     .notes{grid-template-columns:1fr;height:calc(100vh - 130px);}
     .notes .notes-editor-pane{display:none;}
@@ -1948,6 +1958,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
           <span>Add image</span></button>
         <span class="ne-actions" id="neActions"></span>
       </div>
+      <div class="ne-name" id="neName" hidden></div>
         <div class="ne-fmt" id="neFmt" role="toolbar" aria-label="Text formatting">
           <button type="button" class="ne-hbtn fx" data-cmd="bold" title="Bold (Ctrl+B)" aria-label="Bold" aria-pressed="false"><b class="fx-l">B</b></button>
           <button type="button" class="ne-hbtn fx" data-cmd="italic" title="Italic (Ctrl+I)" aria-label="Italic" aria-pressed="false"><i class="fx-l fx-i">I</i></button>
@@ -4396,9 +4407,9 @@ let autoDraft = false, noteOpening = false, curNoteId = null, noteDirty = false,
 let noteUploads = 0;
 const noteTA = ()=>document.getElementById('noteText');
 function noteTitle(text){ const l = String(text||'').split('\n').map(x=>x.trim()).find(Boolean); return l ? l.slice(0,90) : ''; }
-function notePreview(text){
+function notePreview(text, named){
   const lines = String(text||'').split('\n').map(x=>x.trim()).filter(Boolean);
-  return lines.slice(1).join(' ').slice(0,140);
+  return lines.slice(named ? 0 : 1).join(' ').slice(0,140);     // a note with its own name shows its first line too
 }
 function noteWhen(iso){
   if(!iso) return '';
@@ -4471,7 +4482,7 @@ function enterNotes(){
   const q = document.getElementById('nq'); q.value = noteQ;
   renderNotes();
 }
-function noteRowTitle(n){ return noteTitle(n.text) || (noteImageIds(n).length ? 'Picture' : 'New note'); }
+function noteRowTitle(n){ return (n.title && String(n.title).trim()) || noteTitle(n.text) || (noteImageIds(n).length ? 'Picture' : 'New note'); }
 function renderNotes(){
   if(noteDragging){ noteRenderPending = true; return; }
   renderTrashButton();
@@ -4494,7 +4505,7 @@ function renderNotes(){
   const tagK = noteTag ? norm(noteTag) : '';
   const shown = notes.filter(n=>{
     if(tagK && !noteTags(n).some(t=>norm(t)===tagK)) return false;
-    const hay = norm(n.text + ' ' + noteTags(n).join(' ')); return words.every(w=>hay.includes(w));
+    const hay = norm((n.title || '') + ' ' + n.text + ' ' + noteTags(n).join(' ')); return words.every(w=>hay.includes(w));
   });
   if(!notes.length){ list.innerHTML = '<div class="notes-empty">No notes yet. Start writing and it’s saved automatically.</div>'; }
   else if(!shown.length){ list.innerHTML = `<div class="notes-empty">${noteTag && !words.length ? `No notes tagged “${esc(noteTag)}” yet.` : 'No notes match your search.'}</div>`; }
@@ -4507,7 +4518,7 @@ function renderNotes(){
       const col = NOTE_COLORS[n.color] ? n.color : '';
       return `${label}<div role="listitem" class="note-row${n.id===curNoteId?' on':''}" data-id="${esc(n.id)}" data-pinned="${n.pinned?1:0}"${col ? ` data-color="${col}" style="--nc:var(--nc-${col})"` : ''}>
       <button type="button" class="note-open"${n.id===curNoteId?' aria-current="true"':''}><span class="ntext"><span class="nt">${esc(noteRowTitle(n))}</span>
-      <span class="nm"><b>${esc(noteWhen(n.updatedAt))}</b>${n.tasks && n.tasks.total ? `<span class="ntasks" title="${n.tasks.done} of ${n.tasks.total} ticked">☑ ${n.tasks.done}/${n.tasks.total}</span>` : ''}${esc(notePreview(n.text) || extra)}</span>
+      <span class="nm"><b>${esc(noteWhen(n.updatedAt))}</b>${n.tasks && n.tasks.total ? `<span class="ntasks" title="${n.tasks.done} of ${n.tasks.total} ticked">☑ ${n.tasks.done}/${n.tasks.total}</span>` : ''}${esc(notePreview(n.text, !!n.title) || extra)}</span>
       ${noteTags(n).length || noteLinks(n).some(linkTarget) ? `<span class="ntags">${noteTags(n).map(t=>`<span class="ntag">${esc(t)}</span>`).join('')}${noteLinks(n).map(l=>{ const t = linkTarget(l); return t ? `<span class="ntag nlink">${modIcon(l.col)}${esc(t.name||'Untitled')}</span>` : ''; }).join('')}</span>` : ''}</span>
       ${imgs.length ? `<img class="nthumb" src="${esc(assetSrc(imgs[0]))}" alt="" loading="lazy">` : ''}</button>
 <button type="button" class="note-pinbtn${n.pinned?' on':''}" aria-pressed="${n.pinned?'true':'false'}" title="${n.pinned?'Unpin':'Pin to the top'}" aria-label="${n.pinned?'Unpin':'Pin'} “${esc(noteRowTitle(n))}”">${PIN_SVG}</button></div>`;
@@ -4610,9 +4621,49 @@ function renderNoteActions(){
   if(!curNoteId){ box.innerHTML = ''; return; }
   // (left alone when already there, so a click that started on it still lands)
   if(!box.querySelector('#neDel')){
-    box.innerHTML = `<button type="button" class="ne-del" id="neDel" title="Move to the trash (you can bring it back for 30 days)">Delete</button>`;
+    box.innerHTML = `<button type="button" class="ne-ren" id="neRen" title="Give this note its own name (instead of its first line)" aria-label="Rename note"><svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.5l3 3L7 16H4v-3z"/></svg><span>Rename</span></button><button type="button" class="ne-del" id="neDel" title="Move to the trash (you can bring it back for 30 days)">Delete</button>`;
     document.getElementById('neDel').onclick = deleteCurrentNote;
+    document.getElementById('neRen').onclick = ()=>{ nameEditing = true; renderNoteName(); };
   }
+  renderNoteName();
+}
+// ---- a note's own name: by default a note is called by its first line; you can give it another name ----
+let nameEditing = false;
+function renderNoteName(){
+  const box = document.getElementById('neName'); if(!box) return;
+  const n = curNoteId ? notes.find(x=>x.id===curNoteId) : null;
+  if(!n || (!n.title && !nameEditing)){ box.hidden = true; box.innerHTML = ''; box.dataset.shown = ''; return; }
+  box.hidden = false;
+  if(nameEditing){
+    if(box.querySelector('form')) return;                // already typing: leave it alone
+    box.dataset.shown = '';
+    const id = n.id;
+    box.innerHTML = `<form class="nn-form"><input type="text" maxlength="90" aria-label="Note name" placeholder="${esc(noteTitle(n.text) || 'Name this note')}" value="${esc(n.title || '')}"><button type="submit" class="nn-save">Save</button><button type="button" class="nn-cancel">Cancel</button></form><small>Leave it empty to use the note's first line as its name.</small>`;
+    const f = box.querySelector('form'), inp = f.querySelector('input');
+    f.onsubmit = e=>{ e.preventDefault(); saveNoteName(id, inp.value); };
+    f.querySelector('.nn-cancel').onclick = ()=>{ nameEditing = false; renderNoteName(); };
+    inp.onkeydown = e=>{ if(e.key==='Escape'){ e.preventDefault(); nameEditing = false; renderNoteName(); } };
+    inp.focus(); inp.select();
+    return;
+  }
+  if(box.dataset.shown === n.id + '|' + n.title && box.querySelector('.nn-edit')) return;   // nothing changed: keep the buttons as they are
+  box.dataset.shown = n.id + '|' + n.title;
+  box.innerHTML = `<span class="nn-l">Name</span><span class="nn-t">${esc(n.title)}</span><button type="button" class="nn-edit">Rename</button>`;
+  box.querySelector('.nn-edit').onclick = ()=>{ nameEditing = true; renderNoteName(); };
+}
+async function saveNoteName(id, val){
+  const n = notes.find(x=>x.id===id); nameEditing = false;
+  if(!n){ renderNoteName(); return; }
+  const before = n.title || '', title = String(val || '').replace(/\s+/g, ' ').trim().slice(0, 90);
+  if(title === before){ renderNoteName(); return; }
+  n.title = title; renderNotes(); renderNoteName();
+  try{
+    await db.collection('notes').doc(id).update({title});
+    offerUndo(title ? `Renamed to “${title}”.` : 'The note is called by its first line again.', async ()=>{
+      await db.collection('notes').doc(id).update({title: before});
+      const m = notes.find(x=>x.id===id); if(m){ m.title = before; renderNotes(); renderNoteName(); }
+    });
+  }catch(e){ n.title = before; renderNotes(); renderNoteName(); toast("Couldn't rename the note. Try again."); }
 }
 // save what's in the editor now (used before switching away)
 function flushNote(){ if(noteDirty){ clearTimeout(noteTimer); return saveNote(); } return Promise.resolve(); }
@@ -4630,7 +4681,7 @@ async function openNote(id, opts){
   noteOpening = true;
   try{ await leaveNote(); } finally { noteOpening = false; }
   const n = notes.find(x=>x.id===id); if(!n) return;
-  curNoteId = id; noteDirty = false; noteConfirm = false; autoDraft = false; draftTags = []; draftLinks = []; closeTagInput(); linkInputOpen = false;
+  curNoteId = id; nameEditing = false; noteDirty = false; noteConfirm = false; autoDraft = false; draftTags = []; draftLinks = []; closeTagInput(); linkInputOpen = false;
   document.getElementById('notesView').classList.remove('drafting');
   setEditorHTML(noteHTML(n));
   setNoteStatus(n.updatedAt ? `Edited ${noteWhen(n.updatedAt)}` : '');
@@ -4641,7 +4692,7 @@ async function newNote(opts){
   if(noteOpening) return;
   noteOpening = true;
   try{ await leaveNote(); } finally { noteOpening = false; }
-  curNoteId = null; noteDirty = false; noteConfirm = false; closeTagInput();
+  curNoteId = null; nameEditing = false; noteDirty = false; noteConfirm = false; closeTagInput();
   draftTags = noteTag ? [noteTag] : [];         // a new note made while looking at a tag gets that tag
   draftLinks = (opts && opts.links) ? opts.links.slice() : []; linkInputOpen = false;
   draftAtEnd = !!(opts && opts.atEnd);
@@ -5177,7 +5228,7 @@ function notesLinkedTo(col, id){ return notes.filter(n=>noteLinks(n).some(l=>l.c
 function linkedNotesHTML(col, id){
   const list = notesLinkedTo(col, id);
   return `<div class="dn-box"><div class="dn-head"><h3>Notes</h3><button type="button" class="link-btn" onclick="newNoteFor('${col}','${esc(id)}')">+ Write a note</button></div>
-    ${list.length ? list.map(n=>`<button type="button" class="dn-note" onclick="openLinkedNote('${esc(n.id)}')"><b>${esc(noteRowTitle(n))}</b><span>${esc(notePreview(n.text)||'')}</span></button>`).join('')
+    ${list.length ? list.map(n=>`<button type="button" class="dn-note" onclick="openLinkedNote('${esc(n.id)}')"><b>${esc(noteRowTitle(n))}</b><span>${esc(notePreview(n.text, !!n.title)||'')}</span></button>`).join('')
       : `<div class="dn-none">No notes about this yet.</div>`}</div>`;
 }
 async function openLinkedNote(noteId){
