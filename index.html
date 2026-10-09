@@ -1707,6 +1707,11 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .ne-name input{flex:1;min-width:0;padding:6px 8px;border:1px solid var(--line);border-radius:3px;background:var(--paper);color:var(--ink);font-size:0.86rem;}
   .ne-name .nn-save{background:var(--accent);border-color:var(--accent);color:var(--paper);}
   .ne-name small{flex-basis:100%;color:var(--muted);font-size:0.72rem;}
+  .ne-name .nn-t{cursor:text;}
+  .note-ren{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;padding:9px 12px;}
+  .note-row .note-open[hidden], .note-row.renaming .note-pinbtn{display:none !important;}
+  .note-ren input{width:100%;padding:6px 8px;border:1px solid var(--accent);border-radius:3px;background:var(--paper);color:var(--ink);font:inherit;font-weight:600;font-size:0.95rem;}
+  .note-ren small{color:var(--muted);font-size:0.7rem;}
   .ne-actions .ne-yes{color:#a13f3f;border-color:#a13f3f;}
   #noteText{flex:1;min-height:0;width:100%;resize:none;border:none;outline:none;background:none;color:var(--ink);
     padding:22px 26px 40px;font-family:Georgia,'Iowan Old Style',serif;font-size:1.02rem;line-height:1.65;}
@@ -4500,6 +4505,8 @@ function renderNotes(){
   const focusId = focusedRow ? focusedRow.dataset.id : null;
   const focusPin = !!(focusedRow && document.activeElement.classList.contains('note-pinbtn'));
   if(!notesLoaded){ list.innerHTML = '<div class="notes-empty">Loading…</div>'; return; }
+  const renIn = list.querySelector('.nr-in');
+  if(renIn && listRename){ listRename.value = renIn.value; listRename.caret = [renIn.selectionStart, renIn.selectionEnd]; listRename.focused = document.activeElement===renIn; }
   const words = norm(noteQ).split(/\s+/).filter(Boolean);
   renderTagFilter();
   const tagK = noteTag ? norm(noteTag) : '';
@@ -4516,8 +4523,9 @@ function renderNotes(){
       const imgs = noteImageIds(n);
       const extra = imgs.length ? `${imgs.length} ${imgs.length===1?'picture':'pictures'}  ` : '';
       const col = NOTE_COLORS[n.color] ? n.color : '';
-      return `${label}<div role="listitem" class="note-row${n.id===curNoteId?' on':''}" data-id="${esc(n.id)}" data-pinned="${n.pinned?1:0}"${col ? ` data-color="${col}" style="--nc:var(--nc-${col})"` : ''}>
-      <button type="button" class="note-open"${n.id===curNoteId?' aria-current="true"':''}><span class="ntext"><span class="nt">${esc(noteRowTitle(n))}</span>
+      return `${label}<div role="listitem" class="note-row${n.id===curNoteId?' on':''}${listRename && listRename.id===n.id ? ' renaming' : ''}" data-id="${esc(n.id)}" data-pinned="${n.pinned?1:0}"${col ? ` data-color="${col}" style="--nc:var(--nc-${col})"` : ''}>
+      ${listRename && listRename.id===n.id ? `<form class="note-ren"><input class="nr-in" type="text" maxlength="90" aria-label="Note name" value="${esc(listRename.value)}" placeholder="${esc(noteTitle(n.text) || 'Name this note')}"><small>Enter to save · Esc to cancel · empty = first line</small></form>` : ''}
+      <button type="button" class="note-open"${n.id===curNoteId?' aria-current="true"':''}${listRename && listRename.id===n.id ? ' hidden' : ''}><span class="ntext"><span class="nt">${esc(noteRowTitle(n))}</span>
       <span class="nm"><b>${esc(noteWhen(n.updatedAt))}</b>${n.tasks && n.tasks.total ? `<span class="ntasks" title="${n.tasks.done} of ${n.tasks.total} ticked">☑ ${n.tasks.done}/${n.tasks.total}</span>` : ''}${esc(notePreview(n.text, !!n.title) || extra)}</span>
       ${noteTags(n).length || noteLinks(n).some(linkTarget) ? `<span class="ntags">${noteTags(n).map(t=>`<span class="ntag">${esc(t)}</span>`).join('')}${noteLinks(n).map(l=>{ const t = linkTarget(l); return t ? `<span class="ntag nlink">${modIcon(l.col)}${esc(t.name||'Untitled')}</span>` : ''; }).join('')}</span>` : ''}</span>
       ${imgs.length ? `<img class="nthumb" src="${esc(assetSrc(imgs[0]))}" alt="" loading="lazy">` : ''}</button>
@@ -4530,11 +4538,26 @@ function renderNotes(){
   list.querySelectorAll('.note-row').forEach(r=>{
     const open = r.querySelector('.note-open');
     open.onclick = ()=>openNote(r.dataset.id);
-    open.setAttribute('aria-roledescription','reorderable note'); open.title = 'Hold and drag to move (or Alt + ↑ / ↓)';
+    open.ondblclick = e=>{ if(!e.target.closest('.nt')) return; e.preventDefault(); startListRename(r.dataset.id); };   // double-click the name: rename it right there
+    open.setAttribute('aria-roledescription','reorderable note'); open.title = 'Double-click the name to rename it. Hold and drag to move (or Alt + ↑ / ↓)';
+    const rf = r.querySelector('.note-ren');
+    if(rf){
+      const inp = rf.querySelector('input');
+      rf.onsubmit = e=>{ e.preventDefault(); finishListRename(true); };
+      inp.onkeydown = e=>{ if(e.key==='Escape'){ e.preventDefault(); finishListRename(false); } };
+      // clicking elsewhere saves it (a redraw of the list moves the box, that's not leaving it)
+      inp.onblur = ()=>setTimeout(()=>{ const a = document.activeElement; if(a && a.classList && a.classList.contains('nr-in')) return;
+        if(!listRename || listRename.id!==r.dataset.id) return;
+        // the note opening from the same double-click grabs the cursor a moment later: give it back to the name box
+        if(Date.now() - listRename.t0 < 600 && a && a.closest && a.closest('.notes-editor-pane')){ const i = document.querySelector('#notesList .nr-in'); if(i){ i.focus({preventScroll:true}); return; } }
+        finishListRename(true); }, 0);
+      if(listRename.focused !== false){ inp.focus({preventScroll:true});
+        const c = listRename.caret; if(c) inp.setSelectionRange(c[0], c[1]); else inp.select(); }
+    }
     r.querySelector('.note-pinbtn').onclick = e=>{ e.stopPropagation(); togglePin(r.dataset.id); };
   });
   document.getElementById('notesHint').hidden = shown.length < 2;
-  if(focusId){ const again = list.querySelector(`.note-row[data-id="${CSS.escape(focusId)}"] ${focusPin ? '.note-pinbtn' : '.note-open'}`); if(again) again.focus({preventScroll:true}); }
+  if(focusId && !(listRename && listRename.id===focusId)){ const again = list.querySelector(`.note-row[data-id="${CSS.escape(focusId)}"] ${focusPin ? '.note-pinbtn' : '.note-open'}`); if(again) again.focus({preventScroll:true}); }
   // keep the editor in step with changes made elsewhere (another tab or device), unless you're writing
   const cur = notes.find(n=>n.id===curNoteId), ta = noteTA();
   if(cur && !noteDirty && !noteSaving && !noteUploads && document.activeElement!==ta){
@@ -4628,7 +4651,21 @@ function renderNoteActions(){
   renderNoteName();
 }
 // ---- a note's own name: by default a note is called by its first line; you can give it another name ----
-let nameEditing = false;
+let nameEditing = false, listRename = null;
+function startListRename(id){
+  const n = notes.find(x=>x.id===id); if(!n) return;
+  listRename = { id, value: noteRowTitle(n), caret: null, focused: true, t0: Date.now() };
+  renderNotes();
+}
+function finishListRename(save){
+  const r = listRename; if(!r) return;
+  const inp = document.querySelector('#notesList .nr-in'), val = (inp ? inp.value : r.value).trim();
+  listRename = null;
+  const n = notes.find(x=>x.id===r.id);
+  // left as it was (or as the first line it already shows): nothing to save
+  if(!save || !n || (!n.title && val === noteTitle(n.text)) || val === (n.title || '')){ renderNotes(); return; }
+  saveNoteName(r.id, val);
+}
 function renderNoteName(){
   const box = document.getElementById('neName'); if(!box) return;
   const n = curNoteId ? notes.find(x=>x.id===curNoteId) : null;
@@ -4650,6 +4687,7 @@ function renderNoteName(){
   box.dataset.shown = n.id + '|' + n.title;
   box.innerHTML = `<span class="nn-l">Name</span><span class="nn-t">${esc(n.title)}</span><button type="button" class="nn-edit">Rename</button>`;
   box.querySelector('.nn-edit').onclick = ()=>{ nameEditing = true; renderNoteName(); };
+  box.querySelector('.nn-t').ondblclick = ()=>{ nameEditing = true; renderNoteName(); };
 }
 async function saveNoteName(id, val){
   const n = notes.find(x=>x.id===id); nameEditing = false;
@@ -5743,7 +5781,7 @@ function setupNoteDrag(){
   }
   list.addEventListener('pointerdown', e=>{
     const item = e.target.closest('.note-row');
-    if(!item || trashMode || e.target.closest('.note-pinbtn') || (e.pointerType==='mouse' && e.button!==0)) return;
+    if(!item || trashMode || e.target.closest('.note-pinbtn, .note-ren') || (e.pointerType==='mouse' && e.button!==0)) return;
     st = {item, id:e.pointerId, y0:e.clientY, x0:e.clientX, lastY:e.clientY, touch:e.pointerType!=='mouse', dragging:false, moved:false};
     item.classList.add('holding');
     st.timer = setTimeout(start, HOLD_MS);
