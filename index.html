@@ -78,9 +78,52 @@ function showFatal(text){
 function addLogout(){
   const side = $('side'); if(!side || $('msOut')) return;
   const wrap = document.createElement('div'); wrap.className = 'ms-acct';
-  wrap.innerHTML = `<span class="ms-who" title="${String(user.email||'').replace(/"/g,'&quot;')}">${(user.email||'').replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</span><button type="button" id="msOut" class="ms-out">Log out</button>`;
+  wrap.innerHTML = `<span class="ms-who" title="${String(user.email||'').replace(/"/g,'&quot;')}">${(user.email||'').replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</span><span class="ms-btns"><button type="button" id="msImp" class="ms-out" title="Bring in things from a file (for example, from the Claude version)">Import</button><button type="button" id="msOut" class="ms-out">Log out</button></span><input type="file" id="msImpFile" accept=".json,application/json" hidden>`;
   side.appendChild(wrap);
+  $('msImp').onclick = ()=>$('msImpFile').click();
+  $('msImpFile').onchange = async e=>{
+    const f = e.target.files && e.target.files[0]; e.target.value = '';
+    if(!f) return;
+    const say = m=>{ if(typeof window.toast === 'function') window.toast(m); else $('msImp').title = m; };
+    const btn = $('msImp'); btn.disabled = true; btn.textContent = 'Importing…';
+    try{ say(await importFile(f)); }
+    catch(er){ say(er && er.friendly ? er.message : "Couldn't import that file."); }
+    finally{ btn.disabled = false; btn.textContent = 'Import'; }
+  };
   $('msOut').onclick = async ()=>{ try{ await sb.auth.signOut(); }catch(e){} location.reload(); };
+}
+// ---- bring in a file made from the Claude version (notes, items, places… and their pictures) ----
+const IMPORT_COLS = new Set(['notes', 'items', 'wishes', 'goals', 'places']);
+const OLD_ASSET = /^[A-Za-z0-9_-]{6,80}$/;
+async function importFile(file){
+  const bad = m=>Object.assign(new Error(m), { friendly: true });
+  if(file.size > 60e6) throw bad('That file is too big.');
+  let j; try{ j = JSON.parse(await file.text()); }catch(e){ throw bad("That isn't an export file."); }
+  if(!j || j.kind !== 'my-stuff-export' || !isObj(j.collections)) throw bad("That isn't an export file.");
+  // which documents are new (the same file imported twice adds nothing the second time)
+  const todo = [];
+  for(const [col, docs] of Object.entries(j.collections)){
+    if(!IMPORT_COLS.has(col) || !Array.isArray(docs)) continue;
+    for(const d of docs){
+      if(!d || typeof d.id !== 'string' || !OLD_ASSET.test(d.id) || !isObj(d.data)) continue;
+      if((await docRef(col + '/' + d.id).get()).exists) continue;
+      todo.push({ col, id: d.id, data: d.data });
+    }
+  }
+  if(!todo.length) return 'Nothing new in that file: it is all here already.';
+  // pictures used by those documents: upload them to your Supabase, then point the documents at the new copies
+  let json = JSON.stringify(todo), pics = 0;
+  for(const [oldId, a] of Object.entries(isObj(j.assets) ? j.assets : {})){
+    if(!OLD_ASSET.test(oldId) || !json.includes(oldId) || !a || typeof a.b64 !== 'string') continue;
+    const type = /^image\/(png|jpeg|webp|gif)$/.test(a.type) ? a.type : 'image/jpeg';
+    const bin = atob(a.b64), bytes = new Uint8Array(bin.length);
+    for(let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const up = await assetsApi.upload(new File([bytes], 'picture', { type }));
+    json = json.split(oldId).join(up.id); pics++;
+  }
+  for(const d of JSON.parse(json)) await docRef(d.col + '/' + d.id).set(d.data);
+  const n = todo.length, kinds = [...new Set(todo.map(d=>d.col))].join(', ');
+  return `Imported ${n} ${n === 1 ? 'thing' : 'things'} (${kinds})${pics ? ` and ${pics} picture${pics > 1 ? 's' : ''}` : ''}.`;
 }
 function signedIn(u){
   if(user) return;
@@ -1780,6 +1823,8 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .ms-who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .ms-out{align-self:flex-start;background:none;border:1px solid var(--line);color:var(--ink);border-radius:3px;padding:5px 10px;font-size:.78rem;}
   .ms-out:hover{border-color:var(--muted);}
+  .ms-btns{display:flex;gap:6px;flex-wrap:wrap;}
+  .ms-out:disabled{opacity:.6;cursor:default;}
   .side.collapsed .ms-acct{display:none;}
   /* the smooth map */
   .pm-gl .maplibregl-canvas{outline:none;}
