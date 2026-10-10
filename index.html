@@ -1415,7 +1415,9 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .ib-area{margin-top:3px;font-size:0.78rem;color:var(--ink);}
   .ib-row.ib-has-area{cursor:pointer;}
   .ib-row.ib-has-area:hover{background:color-mix(in srgb, var(--ink) 4%, transparent);}
-  .ib-hint{display:flex;gap:5px;margin-top:7px;}
+  .ib-hint{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px;}
+  .ib-hint-help{display:none;flex-basis:100%;color:var(--muted);font-size:0.72rem;line-height:1.35;}
+  .ib-hint:focus-within .ib-hint-help{display:block;}
   .ib-maybe{margin-top:7px;}
   .ib-maybe-l{display:block;font-size:0.74rem;color:var(--muted);margin-bottom:4px;}
   .ib-gs{display:flex;flex-wrap:wrap;gap:5px;}
@@ -6676,7 +6678,7 @@ function renderInbox(list){
         ${it.guesses && it.guesses.length ? `<div class="ib-maybe"><span class="ib-maybe-l">${it.guesses.length > 1 ? 'Maybe one of these. Tap a name to pin it:' : 'Maybe this one. Tap it to pin it:'}</span><div class="ib-gs">${
           it.guesses.slice(0, ibOpen.has(it.id) ? 30 : 6).map((g,i)=>`<span class="ib-g"><button type="button" class="ib-gname" data-g="${i}" title="Pin ${esc(g.name)}">📍<span>${esc(g.name)}</span></button><a class="ib-gmap" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([g.name, g.city].filter(Boolean).join(' '))}" target="_blank" rel="noopener noreferrer" aria-label="Find ${esc(g.name)} on Google Maps" title="Find on Google Maps">${GMAPS_SVG}</a></span>`).join('')
         }${it.guesses.length > 6 && !ibOpen.has(it.id) ? `<button type="button" class="ib-gmore" data-gmore>+${it.guesses.length - 6} more</button>` : ''}</div></div>` : ''}
-        ${canHint && it.source!=='instagram' ? `<form class="ib-hint" data-hint><input type="text" placeholder="Name, comment, or Google Maps link" aria-label="Place name, the comment that mentions it, or a Google Maps link" value="${esc(ibDraft[it.id] ?? it.hint ?? '')}" maxlength="400"><button type="submit" class="pc-btn">Find</button></form>
+        ${canHint && it.source!=='instagram' ? `<form class="ib-hint" data-hint><input type="text" placeholder="Help me find it…" aria-label="Help find the place: its name, a comment that mentions it, or a Google Maps link" value="${esc(ibDraft[it.id] ?? it.hint ?? '')}" maxlength="400"><button type="submit" class="pc-btn">Find</button><small class="ib-hint-help">Type the place’s name, paste a TikTok comment that says where it is, or paste a Google Maps link. Then tap Find.</small></form>
         <div class="ib-msg${ibBusy.has(it.id) ? ' busy' : ''}" role="status">${ibBusy.has(it.id) ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}<span>${esc(ibMsg[it.id] || '')}</span></div>` : ''}
         <div class="ib-acts">${canHint && it.source!=='instagram' ? '<button type="button" class="pc-btn" data-a="retry">↻ Try again</button>' : ''}<button type="button" class="pc-btn pc-main" data-a="pin">Pin it</button>
           <a class="pc-btn" href="${esc(safeHref(it.url || '') || '#')}" target="_blank" rel="noopener noreferrer">Watch</a>
