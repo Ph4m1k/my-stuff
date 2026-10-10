@@ -1320,6 +1320,9 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pp-results button.on{background:color-mix(in srgb, var(--accent) 12%, transparent);}
   .pp-results .rr-t{flex:1;min-width:0;}
   .pp-results .rr-on{flex:0 0 auto;font-size:0.68rem;color:var(--accent);font-weight:600;padding-right:4px;text-align:right;line-height:1.3;}
+  .pp-near{display:flex;flex-direction:column;align-items:flex-start;gap:7px;margin-top:8px;padding:10px 4px 2px;border-top:1px solid var(--line);font-size:0.82rem;color:var(--ink);}
+  .pp-near small{color:var(--muted);font-size:0.74rem;line-height:1.4;}
+  .pp-near .pc-btn{font-size:0.8rem;}
   .pp-more{display:block;width:100%;margin-top:4px;padding:6px 4px;border:none;background:none;color:var(--muted);font-size:0.76rem;text-align:left;cursor:pointer;}
   .pp-more:hover{color:var(--ink);}
   .pp-results .rr-see{flex:0 0 auto;display:inline-flex;padding:6px;border-radius:50%;color:var(--muted);}
@@ -6426,9 +6429,10 @@ function emojiForCategories(cats){
   return '📍';
 }
 let placeSearchCtl = null;
-async function searchPlacesByName(text){
+async function searchPlacesByName(text, alsoAsk){
   if(!plPick) return;
-  plPick.inText = text; plPick.msg = ''; plPick.results = null; plPick.previewI = null; plPick.listOpen = false; plPick.searching = true;
+  plPick.inText = text; plPick.msg = ''; plPick.results = null; plPick.previewI = null; plPick.listOpen = false; plPick.nothingNear = false; plPick.searching = true;
+  plPick.queries = [text, ...(alsoAsk || [])].filter((q, i, a)=>q && a.indexOf(q)===i);
   plPick.searchAt = plMap.center(); plPick.searchZ = plMap.z; renderPickBar();
   if(HOST && HOST.searchPlaces){
     const [clat, clng] = plMap.center();
@@ -6436,8 +6440,11 @@ async function searchPlacesByName(text){
     placeSearchCtl = new AbortController();
     const mine = placeSearchCtl;
     try{
-      const res = await HOST.searchPlaces(text, clat, clng, mine.signal);
+      const lists = await Promise.all(plPick.queries.map(q=>HOST.searchPlaces(q, clat, clng, mine.signal).catch(e=>{ if(mine.signal.aborted) throw e; return null; })));
       if(!plPick || mine.signal.aborted) return;
+      if(lists.every(l=>l===null)) throw new Error('search failed');
+      const res = [];
+      for(const r of lists.flat()) if(r && !res.some(o=>Math.abs(o.lat - r.lat) < 0.0008 && Math.abs(o.lng - r.lng) < 0.0008)) res.push(r);   // the same spot found twice
       plPick.results = res.filter(r=>validLatLng(r.lat, r.lng)).map(r=>({...r, emoji: r.emoji || (r.categories && r.categories.length ? emojiForCategories(r.categories) : '📍')}));
     }catch(e){
       if(mine.signal.aborted || !plPick) return;
@@ -6477,10 +6484,29 @@ async function searchPlacesByName(text){
 function showResults(){
   const res = plPick && plPick.results; if(!res){ renderPickBar(); return; }
   const at = plPick.searchAt, far = r=>at ? distKm(at[0], at[1], r.lat, r.lng) > 60 : false;
-  plPick.results = [...res.filter(r=>!far(r)), ...res.filter(far)];
+  const qs = plPick.queries || [plPick.inText];
+  const fits = r=>Math.max(...qs.map(q=>Math.max(nameMatch(q, r.name), nameMatch(q, String(r.address || '').split(',')[0]))));
+  // far-away places only stay when their name really matches (no random villages with a similar word)
+  plPick.results = [...res.filter(r=>!far(r)), ...res.filter(r=>far(r) && fits(r) >= 0.5)];
   const best = plPick.results[0];
   if(best && (!far(best) || plPick.searchZ <= 8)) previewResult(0);
-  else { if(best) plPick.msg = 'These are far from where the map is. Tap the magnifier to look at one, or tap a name to save it.'; plPick.listOpen = true; renderPickBar(); }
+  else { plPick.nothingNear = true; plPick.listOpen = false; renderPickBar(); }
+}
+// how well a found name matches what you searched (0 to 1); works for Chinese, Japanese… too
+function nameMatch(a, b){
+  const f = x=>norm(x).replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  a = f(a); b = f(b); if(!a || !b) return 0; if(a===b) return 1;
+  const [sh, lo] = a.length <= b.length ? [a, b] : [b, a];
+  if(sh.length >= 3 && lo.includes(sh) && sh.length / lo.length >= 0.4) return 0.8;
+  if(!/[a-z0-9]/.test(a + b)){                         // no spaces between words: compare pairs of letters
+    const pr = x=>{ const t = x.replace(/ /g, ''), o = []; for(let i = 0; i < t.length - 1; i++) o.push(t.slice(i, i + 2)); return o; };
+    const pa = pr(a), pb = pr(b); if(!pa.length || !pb.length) return 0;
+    let c = 0; const left = [...pb]; pa.forEach(x=>{ const i = left.indexOf(x); if(i >= 0){ c++; left.splice(i, 1); } });
+    return 2 * c / (pa.length + pb.length);
+  }
+  const ta = new Set(a.split(' ').filter(w=>w.length > 1)), tb = new Set(b.split(' ').filter(w=>w.length > 1));
+  let c = 0; ta.forEach(w=>{ if(tb.has(w)) c++; });
+  return ta.size && tb.size ? c / Math.max(ta.size, tb.size) : 0;
 }
 function distKm(a, b, c, d){ const k = Math.PI/180, x = (d-b)*k*Math.cos((a+c)/2*k), y = (c-a)*k; return Math.sqrt(x*x+y*y)*6371; }
 // the map flies to a search result and shows a pin there (tap the pin, or the result, to save it)
@@ -6787,7 +6813,8 @@ function pinFromInbox(it, noSearch, gi){
   if(guess){ plPick.guessName = guess.name; }           // saving it takes just this name off the Inbox entry
   if(guess){
     // the local-language name finds more in places like China; the English name stays the place's name
-    searchPlacesByName(guess.local || [guess.name, guess.city].filter(Boolean).join(' '));
+    plPick.guessCity = guess.city || '';
+    searchPlacesByName(guess.local || guess.name, [guess.name, [guess.name, guess.city].filter(Boolean).join(' ')]);
     plPick.inText = guess.name; renderPickBar();
   }
   else { plPick.msg = 'Type the place’s name, or tap the map. The video link will be saved with it.'; renderPickBar(); }
@@ -7094,9 +7121,16 @@ function renderPickBar(){
       <div class="pp-row"><input id="plPickIn" type="search" enterkeyhint="search" placeholder="e.g. Café Savoy Praha" autocomplete="off" aria-label="Place name or Google Maps link" value="${esc(plPick.inText||'')}">
       <button type="button" class="pp-go">${plPick.searching ? '…' : 'Find'}</button><button type="button" class="pp-cancel">Cancel</button></div>
       ${plPick.msg ? `<div class="pp-msg${plPick.importing ? ' busy' : ''}" role="status">${plPick.importing ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}<span>${esc(plPick.msg)}</span></div>` : ''}
-      ${res ? `<div class="pp-results${plPick.previewI != null && !plPick.listOpen ? ' folded' : ''}">${res.length ? res.map((r,i)=>plPick.previewI != null && !plPick.listOpen && i!==plPick.previewI ? '' : `<button type="button" data-i="${i}"${i===plPick.previewI ? ' class="on"' : ''}><span class="rr-e">${esc(r.emoji)}</span><span class="rr-t"><b>${esc(r.name)}</b><small>${esc([r.kind, r.address].filter(Boolean).join(' · '))}</small></span>${i===plPick.previewI ? '<span class="rr-on">on the map<br>tap to save</span>' : `<span class="rr-see" data-see="${i}" role="button" tabindex="0" title="Show it on the map" aria-label="Show ${esc(r.name)} on the map">${'<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4"/></svg>'}</span>`}</button>`).join('')
+      ${res && plPick.nothingNear ? `<div class="pp-near">
+          <div>Couldn’t find <b>${esc(plPick.inText || '')}</b> near here.</div>
+          <a class="pc-btn" href="https://www.google.com/maps/search/${encodeURIComponent([plPick.inText, plPick.guessCity].filter(Boolean).join(' '))}${plPick.searchAt ? `/@${plPick.searchAt[0].toFixed(5)},${plPick.searchAt[1].toFixed(5)},13z` : ''}" target="_blank" rel="noopener noreferrer">${GMAPS_SVG}Look it up in Google Maps</a>
+          <small>Found it there? Copy its link and paste it in the box above. Or tap the map where it is.</small>
+        </div>` : ''}
+      ${res && !(plPick.nothingNear && !plPick.listOpen) ? `<div class="pp-results${plPick.previewI != null && !plPick.listOpen ? ' folded' : ''}">${res.length ? res.map((r,i)=>plPick.previewI != null && !plPick.listOpen && i!==plPick.previewI ? '' : `<button type="button" data-i="${i}"${i===plPick.previewI ? ' class="on"' : ''}><span class="rr-e">${esc(r.emoji)}</span><span class="rr-t"><b>${esc(r.name)}</b><small>${esc([r.kind, r.address].filter(Boolean).join(' · '))}</small></span>${i===plPick.previewI ? '<span class="rr-on">on the map<br>tap to save</span>' : `<span class="rr-see" data-see="${i}" role="button" tabindex="0" title="Show it on the map" aria-label="Show ${esc(r.name)} on the map">${'<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4"/></svg>'}</span>`}</button>`).join('')
         : '<div class="pp-none">Nothing found. Try adding the city, or tap the map.</div>'}</div>
-        ${res.length > 1 && plPick.previewI != null ? `<button type="button" class="pp-more" aria-expanded="${plPick.listOpen ? 'true' : 'false'}">${plPick.listOpen ? 'Hide other results ▴' : `Other results (${res.length - 1}) ▾`}</button>` : ''}` : ''}`;
+        ` : ''}
+        ${res && res.length > 1 && plPick.previewI != null ? `<button type="button" class="pp-more" aria-expanded="${plPick.listOpen ? 'true' : 'false'}">${plPick.listOpen ? 'Hide other results ▴' : `Other results (${res.length - 1}) ▾`}</button>` : ''}
+        ${res && res.length && plPick.nothingNear ? `<button type="button" class="pp-more" aria-expanded="${plPick.listOpen ? 'true' : 'false'}">${plPick.listOpen ? 'Hide far-away places ▴' : `Places with that name far from here (${res.length}) ▾`}</button>` : ''}`;
     const inp = bar.querySelector('#plPickIn');
     const go = ()=>{ const t = inp.value.trim(); if(!t || plPick.importing) return; if(socialLink(t)){ useSocialLink(t); return; } const r = parsePlaceLink(t); if(r) usePlaceLink(t); else searchPlacesByName(t); };
     bar.querySelector('.pp-go').onclick = go;
