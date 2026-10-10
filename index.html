@@ -1425,7 +1425,8 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .ib-g button, .ib-g a{display:inline-flex;align-items:center;border:0;background:none;color:var(--ink);font:inherit;font-size:0.78rem;cursor:pointer;text-decoration:none;}
   .ib-g .ib-gname{gap:4px;padding:5px 6px 5px 10px;min-width:0;}
   .ib-g .ib-gname span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .ib-g .ib-gmap{padding:5px 9px 5px 7px;border-left:1px solid var(--line);color:var(--muted);}
+  .ib-g .ib-gmap{gap:2px;padding:5px 10px 5px 8px;border-left:1px solid var(--line);color:var(--accent);font-weight:600;font-size:0.74rem;white-space:nowrap;}
+  .ib-g .ib-ext{font-size:0.7rem;}
   .ib-g button:hover, .ib-g a:hover{background:color-mix(in srgb, var(--ink) 6%, transparent);}
   .ib-g button:disabled{opacity:.45;cursor:not-allowed;}
   .ib-gmore{border:1px dashed var(--line);border-radius:999px;background:none;color:var(--muted);font-size:0.76rem;padding:4px 10px;cursor:pointer;}
@@ -6675,8 +6676,8 @@ function renderInbox(list){
       <div class="ib-t"><b>${esc(it.caption || it.about || socialName(it.url || '') + ' link')}</b>
         ${it.area && it.area.name ? `<div class="ib-area">📍 Somewhere in ${esc(it.area.name)}</div>` : ''}
         <small>${esc(it.reason || '')}</small>
-        ${it.guesses && it.guesses.length ? `<div class="ib-maybe"><span class="ib-maybe-l">${it.guesses.length > 1 ? 'Maybe one of these. Tap a name to pin it:' : 'Maybe this one. Tap it to pin it:'}</span><div class="ib-gs">${
-          it.guesses.slice(0, ibOpen.has(it.id) ? 30 : 6).map((g,i)=>`<span class="ib-g"><button type="button" class="ib-gname" data-g="${i}" title="Pin ${esc(g.name)}">📍<span>${esc(g.name)}</span></button><a class="ib-gmap" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([g.name, g.city].filter(Boolean).join(' '))}" target="_blank" rel="noopener noreferrer" aria-label="Find ${esc(g.name)} on Google Maps" title="Find on Google Maps">${GMAPS_SVG}</a></span>`).join('')
+        ${it.guesses && it.guesses.length ? `<div class="ib-maybe"><span class="ib-maybe-l">${it.guesses.length > 1 ? 'Maybe one of these. Tap a name to pin it, or “Maps” to look it up in Google Maps:' : 'Maybe this one. Tap it to pin it, or “Maps” to look it up in Google Maps:'}</span><div class="ib-gs">${
+          it.guesses.slice(0, ibOpen.has(it.id) ? 30 : 6).map((g,i)=>`<span class="ib-g"><button type="button" class="ib-gname" data-g="${i}" title="Pin ${esc(g.name)}">📍<span>${esc(g.name)}</span></button><a class="ib-gmap" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([g.name, g.city].filter(Boolean).join(' '))}" target="_blank" rel="noopener noreferrer" aria-label="Find ${esc(g.name)} on Google Maps" title="Open in Google Maps">Maps<span aria-hidden="true" class="ib-ext">↗</span></a></span>`).join('')
         }${it.guesses.length > 6 && !ibOpen.has(it.id) ? `<button type="button" class="ib-gmore" data-gmore>+${it.guesses.length - 6} more</button>` : ''}</div></div>` : ''}
         ${canHint && it.source!=='instagram' ? `<form class="ib-hint" data-hint><input type="text" placeholder="Help me find it…" aria-label="Help find the place: its name, a comment that mentions it, or a Google Maps link" value="${esc(ibDraft[it.id] ?? it.hint ?? '')}" maxlength="400"><button type="submit" class="pc-btn">Find</button><small class="ib-hint-help">Type the place’s name, paste a TikTok comment that says where it is, or paste a Google Maps link. Then tap Find.</small></form>
         <div class="ib-msg${ibBusy.has(it.id) ? ' busy' : ''}" role="status">${ibBusy.has(it.id) ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}<span>${esc(ibMsg[it.id] || '')}</span></div>` : ''}
