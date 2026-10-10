@@ -540,9 +540,9 @@ HOST.createMap = el=>{
     onClick: null, onMarkerClick: null, onPoiClick: null, onTiles: null, onLoading: null, onSnap: null, onMove: null,
     get z(){ return map.getZoom() + GLZ; },
     setView(lat, lng, z){ map.jumpTo({ center: [lng, lat], zoom: z == null ? map.getZoom() : z - GLZ }); },
-    flyTo(lat, lng, z){
-      const o = { center: [lng, lat], zoom: z == null ? map.getZoom() : z - GLZ };
-      if(reduced()) map.jumpTo(o); else map.easeTo({ ...o, duration: 450 });
+    flyTo(lat, lng, z, opt){
+      const o = { center: [lng, lat], zoom: z == null ? map.getZoom() : z - GLZ, ...(opt && opt.offset ? { offset: opt.offset } : {}) };
+      map.easeTo({ ...o, duration: reduced() ? 0 : 450 });
     },
     fit(pts, pad){
       if(!pts.length) return;
@@ -742,17 +742,20 @@ async function searchMapTiler(text, lat, lng, signal){
   });
 }
 async function searchPhoton(text, lat, lng, signal){
-  const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&lat=${(+lat).toFixed(5)}&lon=${(+lng).toFixed(5)}&limit=8&lang=en`, { signal });
-  if(!r.ok) return [];
-  const fc = await r.json();
+  const ask = lang=>fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&lat=${(+lat).toFixed(5)}&lon=${(+lng).toFixed(5)}&limit=8${lang ? '&lang=' + lang : ''}`, { signal })
+    .then(r=>r.ok ? r.json() : { features: [] }).catch(e=>{ if(signal && signal.aborted) throw e; return { features: [] }; });
+  // asked in the local language (finds the right place), and in English (for the English name, when there is one)
+  const [fc, en] = await Promise.all([ask(''), ask('en')]);
+  const enName = new Map((en.features || []).map(f=>[(f.properties || {}).osm_type + (f.properties || {}).osm_id, (f.properties || {}).name]));
   return (fc.features || []).map(f=>{
     const p = f.properties || {}, c = (f.geometry && f.geometry.coordinates) || [];
     if(PH_SKIP.has(p.osm_key) || !p.name) return null;
     const isPoi = !['place', 'landuse', 'building'].includes(p.osm_key) || p.osm_value === 'square';
     const val = String(p.osm_value || '').replace(/_/g, ' ');
+    const e = enName.get(p.osm_type + p.osm_id), english = e && e !== p.name && /^[\p{Script=Latin}\p{N}\p{P}\p{S}\s]+$/u.test(e) ? e : '';
     return {
-      name: p.name,
-      address: [[p.street, p.housenumber].filter(Boolean).join(' '), p.district || p.locality, p.city || p.county, p.country].filter(Boolean).join(', '),
+      name: english || p.name,
+      address: [english ? p.name : '', [p.street, p.housenumber].filter(Boolean).join(' '), p.district || p.locality, p.city || p.county, p.country].filter(Boolean).join(', '),
       lat: +c[1], lng: +c[0],
       categories: isPoi ? [p.osm_value, p.osm_key].filter(Boolean).map(String) : [],
       emoji: isPoi ? '' : '📍',
@@ -1316,7 +1319,9 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pp-results button:last-child{border-bottom:none;}
   .pp-results button.on{background:color-mix(in srgb, var(--accent) 12%, transparent);}
   .pp-results .rr-t{flex:1;min-width:0;}
-  .pp-results .rr-on{flex:0 0 auto;font-size:0.68rem;color:var(--accent);font-weight:600;padding-right:4px;}
+  .pp-results .rr-on{flex:0 0 auto;font-size:0.68rem;color:var(--accent);font-weight:600;padding-right:4px;text-align:right;line-height:1.3;}
+  .pp-more{display:block;width:100%;margin-top:4px;padding:6px 4px;border:none;background:none;color:var(--muted);font-size:0.76rem;text-align:left;cursor:pointer;}
+  .pp-more:hover{color:var(--ink);}
   .pp-results .rr-see{flex:0 0 auto;display:inline-flex;padding:6px;border-radius:50%;color:var(--muted);}
   .pp-results .rr-see:hover{color:var(--ink);background:color-mix(in srgb, var(--ink) 8%, transparent);}
   .pp-results button:hover,.pp-results button:focus-visible{background:color-mix(in srgb, var(--accent) 10%, transparent);}
@@ -6147,9 +6152,10 @@ function createMap(el){
   }
   function stopAnim(){ if(m.anim){ cancelAnimationFrame(m.anim); m.anim = null; } }
   m.setView = (lat, lng, z)=>{ stopAnim(); const [x, y] = mProj(lat, lng); m.cx = x; m.cy = y; if(z!=null) m.z = z; draw(); };
-  m.flyTo = (lat, lng, z)=>{
+  m.flyTo = (lat, lng, z, opt)=>{
     stopAnim();
-    const [tx, ty] = mProj(lat, lng), fx = m.cx, fy = m.cy, fz = m.z, tzz = z==null ? m.z : z;
+    const fx = m.cx, fy = m.cy, fz = m.z, tzz = z==null ? m.z : z, off = opt && opt.offset ? opt.offset : [0, 0];
+    let [tx, ty] = mProj(lat, lng); tx -= off[0] / Math.pow(2, tzz); ty -= off[1] / Math.pow(2, tzz);   // the place shows that many pixels off-centre
     let dx = tx - fx; if(dx > TILE/2) dx -= TILE; if(dx < -TILE/2) dx += TILE;
     if(window.matchMedia('(prefers-reduced-motion: reduce)').matches){ m.cx = fx + dx; m.cy = ty; m.z = tzz; draw(); return; }
     const t0 = performance.now(), D = 450;
@@ -6422,7 +6428,8 @@ function emojiForCategories(cats){
 let placeSearchCtl = null;
 async function searchPlacesByName(text){
   if(!plPick) return;
-  plPick.inText = text; plPick.msg = ''; plPick.results = null; plPick.previewI = null; plPick.searching = true; renderPickBar();
+  plPick.inText = text; plPick.msg = ''; plPick.results = null; plPick.previewI = null; plPick.listOpen = false; plPick.searching = true;
+  plPick.searchAt = plMap.center(); plPick.searchZ = plMap.z; renderPickBar();
   if(HOST && HOST.searchPlaces){
     const [clat, clng] = plMap.center();
     if(placeSearchCtl) placeSearchCtl.abort();
@@ -6436,7 +6443,7 @@ async function searchPlacesByName(text){
       if(mine.signal.aborted || !plPick) return;
       plPick.msg = "Search didn't work just now. Try again, or tap the map.";
     }
-    plPick.searching = false; renderPickBar(); previewResult(0);
+    plPick.searching = false; showResults();
     return;
   }
   const mcp = await getMcp();
@@ -6463,14 +6470,29 @@ async function searchPlacesByName(text){
                : "Search didn't work just now. Try again, or tap the map.";
   }
   if(!plPick) return;
-  plPick.searching = false; renderPickBar(); previewResult(0);
+  plPick.searching = false; showResults();
 }
+// matches near where you're looking come first (a "老君洞" exists in several provinces);
+// the map flies to the best one, unless all of them are far from here
+function showResults(){
+  const res = plPick && plPick.results; if(!res){ renderPickBar(); return; }
+  const at = plPick.searchAt, far = r=>at ? distKm(at[0], at[1], r.lat, r.lng) > 60 : false;
+  plPick.results = [...res.filter(r=>!far(r)), ...res.filter(far)];
+  const best = plPick.results[0];
+  if(best && (!far(best) || plPick.searchZ <= 8)) previewResult(0);
+  else { if(best) plPick.msg = 'These are far from where the map is. Tap the magnifier to look at one, or tap a name to save it.'; plPick.listOpen = true; renderPickBar(); }
+}
+function distKm(a, b, c, d){ const k = Math.PI/180, x = (d-b)*k*Math.cos((a+c)/2*k), y = (c-a)*k; return Math.sqrt(x*x+y*y)*6371; }
 // the map flies to a search result and shows a pin there (tap the pin, or the result, to save it)
 function previewResult(i){
   const r = plPick && plPick.results && plPick.results[i]; if(!r) return;
-  plPick.previewI = i; plPick.temp = [r.lat, r.lng];
-  plMap.flyTo(r.lat, r.lng, Math.max(plMap.z, 16));
-  renderPlaces();
+  plPick.previewI = i; plPick.temp = [r.lat, r.lng]; plPick.listOpen = false; plPick.msg = '';
+  renderPlaces();                                           // the list folds up to this one result first…
+  // …then the map flies there, with the pin in the open part of the map below the search box
+  const bar = document.getElementById('plPick'), mapEl = document.getElementById('plMap');
+  let dy = 0;
+  if(bar && mapEl && !bar.hidden){ const b = bar.getBoundingClientRect(), m = mapEl.getBoundingClientRect(); dy = Math.max(0, Math.round((b.bottom - m.top) / 2)); }
+  plMap.flyTo(r.lat, r.lng, Math.max(plMap.z, 16), {offset: [0, dy]});
 }
 function pickSearchResult(i){
   const r = plPick && plPick.results && plPick.results[i]; if(!r) return;
@@ -7072,8 +7094,9 @@ function renderPickBar(){
       <div class="pp-row"><input id="plPickIn" type="search" enterkeyhint="search" placeholder="e.g. Café Savoy Praha" autocomplete="off" aria-label="Place name or Google Maps link" value="${esc(plPick.inText||'')}">
       <button type="button" class="pp-go">${plPick.searching ? '…' : 'Find'}</button><button type="button" class="pp-cancel">Cancel</button></div>
       ${plPick.msg ? `<div class="pp-msg${plPick.importing ? ' busy' : ''}" role="status">${plPick.importing ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}<span>${esc(plPick.msg)}</span></div>` : ''}
-      ${res ? `<div class="pp-results">${res.length ? res.map((r,i)=>`<button type="button" data-i="${i}"${i===plPick.previewI ? ' class="on"' : ''}><span class="rr-e">${esc(r.emoji)}</span><span class="rr-t"><b>${esc(r.name)}</b><small>${esc([r.kind, r.address].filter(Boolean).join(' · '))}</small></span>${i===plPick.previewI ? '<span class="rr-on">on the map</span>' : `<span class="rr-see" data-see="${i}" role="button" tabindex="0" title="Show it on the map" aria-label="Show ${esc(r.name)} on the map">${'<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4"/></svg>'}</span>`}</button>`).join('')
-        : '<div class="pp-none">Nothing found. Try adding the city, or tap the map.</div>'}</div>` : ''}`;
+      ${res ? `<div class="pp-results${plPick.previewI != null && !plPick.listOpen ? ' folded' : ''}">${res.length ? res.map((r,i)=>plPick.previewI != null && !plPick.listOpen && i!==plPick.previewI ? '' : `<button type="button" data-i="${i}"${i===plPick.previewI ? ' class="on"' : ''}><span class="rr-e">${esc(r.emoji)}</span><span class="rr-t"><b>${esc(r.name)}</b><small>${esc([r.kind, r.address].filter(Boolean).join(' · '))}</small></span>${i===plPick.previewI ? '<span class="rr-on">on the map<br>tap to save</span>' : `<span class="rr-see" data-see="${i}" role="button" tabindex="0" title="Show it on the map" aria-label="Show ${esc(r.name)} on the map">${'<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4"/></svg>'}</span>`}</button>`).join('')
+        : '<div class="pp-none">Nothing found. Try adding the city, or tap the map.</div>'}</div>
+        ${res.length > 1 && plPick.previewI != null ? `<button type="button" class="pp-more" aria-expanded="${plPick.listOpen ? 'true' : 'false'}">${plPick.listOpen ? 'Hide other results ▴' : `Other results (${res.length - 1}) ▾`}</button>` : ''}` : ''}`;
     const inp = bar.querySelector('#plPickIn');
     const go = ()=>{ const t = inp.value.trim(); if(!t || plPick.importing) return; if(socialLink(t)){ useSocialLink(t); return; } const r = parsePlaceLink(t); if(r) usePlaceLink(t); else searchPlacesByName(t); };
     bar.querySelector('.pp-go').onclick = go;
@@ -7082,6 +7105,7 @@ function renderPickBar(){
       if(see){ e.stopPropagation(); previewResult(+see.dataset.see); return; }      // the magnifier: just look at it on the map
       pickSearchResult(+b.dataset.i);
     });
+    const more = bar.querySelector('.pp-more'); if(more) more.onclick = ()=>{ plPick.listOpen = !plPick.listOpen; renderPickBar(); };
     bar.querySelectorAll('.pp-results [data-see]').forEach(x=>x.onkeydown = e=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); e.stopPropagation(); previewResult(+x.dataset.see); } });
     inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } if(e.key==='Escape'){ e.preventDefault(); cancelPick(); } });
     inp.addEventListener('paste', e=>{ const t = (e.clipboardData && e.clipboardData.getData('text')) || ''; if(parsePlaceLink(t.trim()) || socialLink(t)) setTimeout(go, 0); });
