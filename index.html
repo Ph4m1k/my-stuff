@@ -6366,7 +6366,8 @@ function ensurePlacesMap(){
   plMap.onMarkerClick = id=>{
     if(id==='__poi') return;
     if(plPick && plPick.mode==='move') return;
-    if(plPick){ if(id==='__temp' && plPick.results && plPick.previewI != null) pickSearchResult(plPick.previewI); return; }   // tap the shown match to save it
+    if(plPick && id==='__temp'){ if(plPick.results && plPick.previewI != null) pickSearchResult(plPick.previewI); return; }   // tap the shown match to save it
+    if(plPick){ if(id.startsWith('__')) return; plPick = null; }   // adding a place, but you tapped one of yours: show that one
     selectPlace(id, {pan:false});
   };
   plMap.onLoading = on=>{ document.getElementById('plLoading').hidden = !on; };
@@ -7069,8 +7070,10 @@ function tappedMapPlace(poi){
     return;
   }
   // already saved? open yours instead
-  const n = norm(poi.name), nl = poi.local ? norm(poi.local) : '', mine = places.find(p=>validLatLng(p.lat, p.lng) && (norm(p.name||'')===n || (nl && norm(p.name||'')===nl)) &&
-    Math.abs(p.lat - poi.lat) < 0.0006 && Math.abs(p.lng - poi.lng) < 0.0009);
+  // one of yours right there (same spot, or nearby with a matching name, in English or the local language)?
+  const mine = places.filter(p=>validLatLng(p.lat, p.lng)).map(p=>({p, d: distKm(p.lat, p.lng, poi.lat, poi.lng) * 1000,
+      m: Math.max(nameMatch(p.name || '', poi.name || ''), poi.local ? nameMatch(p.name || '', poi.local) : 0)}))
+    .filter(x=>x.d < 30 || (x.d < 150 && x.m >= 0.5)).sort((a, b)=>a.d - b.d).map(x=>x.p)[0];
   if(mine){ selectPlace(mine.id); return; }
   plSel = null; plPoi = {...poi, emoji};
   renderPlaces();
