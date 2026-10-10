@@ -1314,6 +1314,11 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pp-results{margin-top:8px;max-height:min(46vh, 300px);overflow-y:auto;border-top:1px solid var(--line);}
   .pp-results button{display:flex;align-items:center;gap:10px;width:100%;padding:8px 4px;border:none;border-bottom:1px solid var(--line);background:none;color:var(--ink);text-align:left;cursor:pointer;}
   .pp-results button:last-child{border-bottom:none;}
+  .pp-results button.on{background:color-mix(in srgb, var(--accent) 12%, transparent);}
+  .pp-results .rr-t{flex:1;min-width:0;}
+  .pp-results .rr-on{flex:0 0 auto;font-size:0.68rem;color:var(--accent);font-weight:600;padding-right:4px;}
+  .pp-results .rr-see{flex:0 0 auto;display:inline-flex;padding:6px;border-radius:50%;color:var(--muted);}
+  .pp-results .rr-see:hover{color:var(--ink);background:color-mix(in srgb, var(--ink) 8%, transparent);}
   .pp-results button:hover,.pp-results button:focus-visible{background:color-mix(in srgb, var(--accent) 10%, transparent);}
   .pp-results .rr-e{flex:0 0 26px;font-size:1.1rem;text-align:center;}
   .pp-results b{display:block;font-size:0.88rem;}
@@ -6352,7 +6357,7 @@ function ensurePlacesMap(){
   plMap.onMarkerClick = id=>{
     if(id==='__poi') return;
     if(plPick && plPick.mode==='move') return;
-    if(plPick){ return; }
+    if(plPick){ if(id==='__temp' && plPick.results && plPick.previewI != null) pickSearchResult(plPick.previewI); return; }   // tap the shown match to save it
     selectPlace(id, {pan:false});
   };
   plMap.onLoading = on=>{ document.getElementById('plLoading').hidden = !on; };
@@ -6417,7 +6422,7 @@ function emojiForCategories(cats){
 let placeSearchCtl = null;
 async function searchPlacesByName(text){
   if(!plPick) return;
-  plPick.inText = text; plPick.msg = ''; plPick.results = null; plPick.searching = true; renderPickBar();
+  plPick.inText = text; plPick.msg = ''; plPick.results = null; plPick.previewI = null; plPick.searching = true; renderPickBar();
   if(HOST && HOST.searchPlaces){
     const [clat, clng] = plMap.center();
     if(placeSearchCtl) placeSearchCtl.abort();
@@ -6431,7 +6436,7 @@ async function searchPlacesByName(text){
       if(mine.signal.aborted || !plPick) return;
       plPick.msg = "Search didn't work just now. Try again, or tap the map.";
     }
-    plPick.searching = false; renderPickBar();
+    plPick.searching = false; renderPickBar(); previewResult(0);
     return;
   }
   const mcp = await getMcp();
@@ -6458,7 +6463,14 @@ async function searchPlacesByName(text){
                : "Search didn't work just now. Try again, or tap the map.";
   }
   if(!plPick) return;
-  plPick.searching = false; renderPickBar();
+  plPick.searching = false; renderPickBar(); previewResult(0);
+}
+// the map flies to a search result and shows a pin there (tap the pin, or the result, to save it)
+function previewResult(i){
+  const r = plPick && plPick.results && plPick.results[i]; if(!r) return;
+  plPick.previewI = i; plPick.temp = [r.lat, r.lng];
+  plMap.flyTo(r.lat, r.lng, Math.max(plMap.z, 16));
+  renderPlaces();
 }
 function pickSearchResult(i){
   const r = plPick && plPick.results && plPick.results[i]; if(!r) return;
@@ -7060,12 +7072,17 @@ function renderPickBar(){
       <div class="pp-row"><input id="plPickIn" type="search" enterkeyhint="search" placeholder="e.g. Café Savoy Praha" autocomplete="off" aria-label="Place name or Google Maps link" value="${esc(plPick.inText||'')}">
       <button type="button" class="pp-go">${plPick.searching ? '…' : 'Find'}</button><button type="button" class="pp-cancel">Cancel</button></div>
       ${plPick.msg ? `<div class="pp-msg${plPick.importing ? ' busy' : ''}" role="status">${plPick.importing ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}<span>${esc(plPick.msg)}</span></div>` : ''}
-      ${res ? `<div class="pp-results">${res.length ? res.map((r,i)=>`<button type="button" data-i="${i}"><span class="rr-e">${esc(r.emoji)}</span><span class="rr-t"><b>${esc(r.name)}</b><small>${esc([r.kind, r.address].filter(Boolean).join(' · '))}</small></span></button>`).join('')
+      ${res ? `<div class="pp-results">${res.length ? res.map((r,i)=>`<button type="button" data-i="${i}"${i===plPick.previewI ? ' class="on"' : ''}><span class="rr-e">${esc(r.emoji)}</span><span class="rr-t"><b>${esc(r.name)}</b><small>${esc([r.kind, r.address].filter(Boolean).join(' · '))}</small></span>${i===plPick.previewI ? '<span class="rr-on">on the map</span>' : `<span class="rr-see" data-see="${i}" role="button" tabindex="0" title="Show it on the map" aria-label="Show ${esc(r.name)} on the map">${'<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4"/></svg>'}</span>`}</button>`).join('')
         : '<div class="pp-none">Nothing found. Try adding the city, or tap the map.</div>'}</div>` : ''}`;
     const inp = bar.querySelector('#plPickIn');
     const go = ()=>{ const t = inp.value.trim(); if(!t || plPick.importing) return; if(socialLink(t)){ useSocialLink(t); return; } const r = parsePlaceLink(t); if(r) usePlaceLink(t); else searchPlacesByName(t); };
     bar.querySelector('.pp-go').onclick = go;
-    bar.querySelectorAll('.pp-results button').forEach(b=>b.onclick = ()=>pickSearchResult(+b.dataset.i));
+    bar.querySelectorAll('.pp-results button').forEach(b=>b.onclick = e=>{
+      const see = e.target.closest('[data-see]');
+      if(see){ e.stopPropagation(); previewResult(+see.dataset.see); return; }      // the magnifier: just look at it on the map
+      pickSearchResult(+b.dataset.i);
+    });
+    bar.querySelectorAll('.pp-results [data-see]').forEach(x=>x.onkeydown = e=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); e.stopPropagation(); previewResult(+x.dataset.see); } });
     inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); go(); } if(e.key==='Escape'){ e.preventDefault(); cancelPick(); } });
     inp.addEventListener('paste', e=>{ const t = (e.clipboardData && e.clipboardData.getData('text')) || ''; if(parsePlaceLink(t.trim()) || socialLink(t)) setTimeout(go, 0); });
     if(plPick.importing) inp.disabled = true;
