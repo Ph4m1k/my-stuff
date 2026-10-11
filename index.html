@@ -6442,13 +6442,14 @@ function emojiForCategories(cats){
   return '📍';
 }
 let placeSearchCtl = null;
-async function searchPlacesByName(text, alsoAsk){
+async function searchPlacesByName(text, alsoAsk, near){
   if(!plPick) return;
   plPick.inText = text; plPick.msg = ''; plPick.results = null; plPick.previewI = null; plPick.listOpen = false; plPick.nothingNear = false; plPick.searching = true;
   plPick.queries = [text, ...(alsoAsk || [])].filter((q, i, a)=>q && a.indexOf(q)===i);
-  plPick.searchAt = plMap.center(); plPick.searchZ = plMap.z; renderPickBar();
+  // where to look: the place's city when we know it (the map doesn't move until something is found), else where the map is
+  plPick.searchAt = near ? [near.lat, near.lng] : plMap.center(); plPick.searchZ = near ? 13 : plMap.z; renderPickBar();
   if(HOST && HOST.searchPlaces){
-    const [clat, clng] = plMap.center();
+    const [clat, clng] = plPick.searchAt;
     if(placeSearchCtl) placeSearchCtl.abort();
     placeSearchCtl = new AbortController();
     const mine = placeSearchCtl;
@@ -6468,7 +6469,7 @@ async function searchPlacesByName(text, alsoAsk){
   }
   const mcp = await getMcp();
   if(!mcp){ plPick.searching = false; plPick.msg = "Search needs TomTom, which can't run in this view. Tap the map instead."; renderPickBar(); return; }
-  const [clat, clng] = plMap.center();
+  const [clat, clng] = plPick.searchAt;
   if(placeSearchCtl) placeSearchCtl.abort();
   placeSearchCtl = new AbortController();
   try{
@@ -6700,7 +6701,6 @@ async function useSocialLink(text){
   toast(r.message || 'Done.');
   if(r.added && r.added.length) showImported(r.added.map(a=>a.id));
   else if(r.inbox){
-    flyToArea(r.area);
     plShowInbox = true; if(!isWide()) togglePlacesList(true); renderPlaces();
   }
 }
@@ -6803,7 +6803,6 @@ async function helpInbox(it, hint, retry){
     inbox = inbox.filter(x=>x.id!==it.id); plShowInbox = false; renderPlaces();
     showImported(r.added.map(a=>a.id));
   } else {
-    if(r && r.ok && r.area) flyToArea(r.area);
     ibMsg[it.id] = r && r.ok ? (retry ? "Still couldn't tell. Type the place's name below, or tap Pin it." : "Still couldn't find it. Try the exact name, or tap Pin it.") : (r && r.error) || "That didn't work. Try again.";
     renderPlaces();
   }
@@ -6817,7 +6816,8 @@ function pinFromInbox(it, noSearch, gi){
   plShowInbox = false;
   startAddPlace();
   plPick.srcLink = it.url || ''; plPick.inboxId = it.id;
-  if(it.area && validLatLng(it.area.lat, it.area.lng)) plMap.setView(it.area.lat, it.area.lng, 13);   // start in its city
+  const area = it.area && validLatLng(it.area.lat, it.area.lng) ? {lat: it.area.lat, lng: it.area.lng} : null;
+  plPick.areaName = area && it.area.name ? String(it.area.name).split(',')[0].trim() : '';
   const guess = it.guesses && it.guesses[gi || 0];
   if(noSearch){                                       // a Google Maps link pasted for this video
     if(it.guesses && it.guesses.length > 1) plPick.keepInbox = true;   // can't tell which name it was: keep the others
@@ -6827,10 +6827,13 @@ function pinFromInbox(it, noSearch, gi){
   if(guess){
     // the local-language name finds more in places like China; the English name stays the place's name
     plPick.guessCity = guess.city || '';
-    searchPlacesByName(guess.local || guess.name, [guess.name, [guess.name, guess.city].filter(Boolean).join(' ')]);
+    searchPlacesByName(guess.local || guess.name, [guess.name, [guess.name, guess.city].filter(Boolean).join(' ')], area);   // the map stays put until it's found
     plPick.inText = guess.name; renderPickBar();
   }
-  else { plPick.msg = 'Type the place’s name, or tap the map. The video link will be saved with it.'; renderPickBar(); }
+  else {
+    if(area) plMap.flyTo(area.lat, area.lng, 13);         // no name to look for: go to its city, so you can tap the spot
+    plPick.msg = 'Type the place’s name, or tap the map. The video link will be saved with it.'; renderPickBar();
+  }
 }
 async function removeInbox(it){
   const copy = {...it}; delete copy.id;
@@ -7137,7 +7140,7 @@ function renderPickBar(){
       <button type="button" class="pp-go">${plPick.searching ? '…' : 'Find'}</button><button type="button" class="pp-cancel">Cancel</button></div>
       ${plPick.msg ? `<div class="pp-msg${plPick.importing ? ' busy' : ''}" role="status">${plPick.importing ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}<span>${esc(plPick.msg)}</span></div>` : ''}
       ${res && plPick.nothingNear ? `<div class="pp-near">
-          <div>Couldn’t find <b>${esc(plPick.inText || '')}</b> near here.</div>
+          <div>Couldn’t find <b>${esc(plPick.inText || '')}</b> ${plPick.areaName && plPick.searchZ === 13 ? `in ${esc(plPick.areaName)}` : 'near here'}.</div>
           <a class="pc-btn" href="https://www.google.com/maps/search/${encodeURIComponent([plPick.inText, plPick.guessCity].filter(Boolean).join(' '))}${plPick.searchAt ? `/@${plPick.searchAt[0].toFixed(5)},${plPick.searchAt[1].toFixed(5)},13z` : ''}" target="_blank" rel="noopener noreferrer">${GMAPS_SVG}Look it up in Google Maps</a>
           <small>Found it there? Copy its link and paste it in the box above. Or tap the map where it is.</small>
         </div>` : ''}
