@@ -770,20 +770,27 @@ async function searchPhoton(text, lat, lng, signal){
     };
   }).filter(Boolean);
 }
-HOST.searchPlaces = async (text, lat, lng, signal)=>{
+// results arrive bit by bit (onPart gets each search's answer as soon as it's in), and are remembered for a while
+const searchCache = new Map();
+HOST.searchPlaces = async (text, lat, lng, signal, onPart)=>{
+  const key = text + '|' + (+lat).toFixed(2) + '|' + (+lng).toFixed(2), hit = searchCache.get(key);
+  if(hit && Date.now() - hit.t < 10 * 60e3){ if(onPart) onPart(hit.list); return hit.list; }
+  const tell = list=>{ if(onPart && list && list.length && !(signal && signal.aborted)) onPart(list); return list; };
   const [mt, ph] = await Promise.all([
-    searchMapTiler(text, lat, lng, signal).catch(e=>{ if(signal && signal.aborted) throw e; return null; }),
-    searchPhoton(text, lat, lng, signal).catch(e=>{ if(signal && signal.aborted) throw e; return []; }),
+    searchMapTiler(text, lat, lng, signal).then(tell).catch(e=>{ if(signal && signal.aborted) throw e; return null; }),
+    searchPhoton(text, lat, lng, signal).then(l=>tell(l.filter(x=>distKm(+lat, +lng, x.lat, x.lng) < 300))).catch(e=>{ if(signal && signal.aborted) throw e; return []; }),
   ]);
   if(mt === null && !ph.length) throw new Error('search failed');
   // real places first (MapTiler's, then Photon's within reach), then streets, towns and the rest
-  const m = mt || [], phNear = ph.filter(x=>distKm(+lat, +lng, x.lat, x.lng) < 300), out = [];
+  const m = mt || [], phNear = ph, out = [];
   const ordered = [...m.filter(x=>x.poi), ...phNear.filter(x=>x.poi), ...m.filter(x=>!x.poi), ...phNear.filter(x=>!x.poi)];
   for(const x of ordered){
     if(out.some(o=>Math.abs(o.lat - x.lat) < 0.0008 && Math.abs(o.lng - x.lng) < 0.0008)) continue;   // the same spot twice
     out.push(x); if(out.length >= 8) break;
   }
-  return out.map(({poi, ...x})=>x);
+  searchCache.set(key, { t: Date.now(), list: out });
+  if(searchCache.size > 200) searchCache.delete(searchCache.keys().next().value);
+  return out;
 };
 
 // ================= what the app asks for =================
@@ -1326,6 +1333,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pp-results button.on{background:color-mix(in srgb, var(--accent) 12%, transparent);}
   .pp-results .rr-t{flex:1;min-width:0;}
   .pp-results .rr-on{flex:0 0 auto;font-size:0.68rem;color:var(--accent);font-weight:600;padding-right:4px;text-align:right;line-height:1.3;}
+  .pp-wait{display:flex;align-items:center;margin-top:8px;font-size:0.8rem;color:var(--muted);}
   .pp-near{display:flex;flex-direction:column;align-items:flex-start;gap:7px;margin-top:8px;padding:10px 4px 2px;border-top:1px solid var(--line);font-size:0.82rem;color:var(--ink);}
   .pp-near small{color:var(--muted);font-size:0.74rem;line-height:1.4;}
   .pp-near .pc-btn{font-size:0.8rem;}
@@ -6454,12 +6462,20 @@ async function searchPlacesByName(text, alsoAsk, near){
     placeSearchCtl = new AbortController();
     const mine = placeSearchCtl;
     try{
-      const lists = await Promise.all(plPick.queries.map(q=>HOST.searchPlaces(q, clat, clng, mine.signal).catch(e=>{ if(mine.signal.aborted) throw e; return null; })));
+      const found = [], withEmoji = r=>({...r, emoji: r.emoji || (r.categories && r.categories.length ? emojiForCategories(r.categories) : '📍')});
+      const add = list=>{ for(const r of list || []) if(r && validLatLng(r.lat, r.lng) && !found.some(o=>Math.abs(o.lat - r.lat) < 0.0008 && Math.abs(o.lng - r.lng) < 0.0008)) found.push(withEmoji(r)); };   // the same spot found twice
+      // as soon as one search brings a good match near the place, the map goes there (no waiting for the slower ones)
+      const onPart = list=>{ if(!plPick || mine.signal.aborted) return; add(list); partialResults(found); };
+      const lists = await Promise.all(plPick.queries.map(q=>HOST.searchPlaces(q, clat, clng, mine.signal, onPart).catch(e=>{ if(mine.signal.aborted) throw e; return null; })));
       if(!plPick || mine.signal.aborted) return;
       if(lists.every(l=>l===null)) throw new Error('search failed');
-      const res = [];
-      for(const r of lists.flat()) if(r && !res.some(o=>Math.abs(o.lat - r.lat) < 0.0008 && Math.abs(o.lng - r.lng) < 0.0008)) res.push(r);   // the same spot found twice
-      plPick.results = res.filter(r=>validLatLng(r.lat, r.lng)).map(r=>({...r, emoji: r.emoji || (r.categories && r.categories.length ? emojiForCategories(r.categories) : '📍')}));
+      lists.forEach(add);
+      if(plPick.previewI != null){                        // already on the map: just add the rest to "Other results"
+        const cur = plPick.results[plPick.previewI];
+        plPick.results = [cur, ...rankResults(found).filter(r=>r !== cur && !(Math.abs(r.lat - cur.lat) < 0.0008 && Math.abs(r.lng - cur.lng) < 0.0008))]; plPick.previewI = 0;
+        plPick.searching = false; renderPickBar(); return;
+      }
+      plPick.results = found.filter(r=>validLatLng(r.lat, r.lng)).map(r=>({...r, emoji: r.emoji || (r.categories && r.categories.length ? emojiForCategories(r.categories) : '📍')}));
     }catch(e){
       if(mine.signal.aborted || !plPick) return;
       plPick.msg = "Search didn't work just now. Try again, or tap the map.";
@@ -6495,14 +6511,22 @@ async function searchPlacesByName(text, alsoAsk, near){
 }
 // matches near where you're looking come first (a "老君洞" exists in several provinces);
 // the map flies to the best one, unless all of them are far from here
+function farFromSearch(r){ const at = plPick && plPick.searchAt; return at ? distKm(at[0], at[1], r.lat, r.lng) > 60 : false; }
+function fitsSearch(r){ const qs = (plPick && plPick.queries) || [plPick && plPick.inText]; return Math.max(...qs.map(q=>Math.max(nameMatch(q || '', r.name), nameMatch(q || '', String(r.address || '').split(',')[0])))); }
+// nearby first; far-away places only stay when their name really matches (no random villages with a similar word)
+function rankResults(res){ return [...res.filter(r=>!farFromSearch(r)), ...res.filter(r=>farFromSearch(r) && fitsSearch(r) >= 0.5)]; }
+// while the searches are still coming in: go to a match as soon as there's a convincing one near the place
+function partialResults(found){
+  if(!plPick || plPick.previewI != null) return;
+  const good = found.find(r=>!farFromSearch(r) && fitsSearch(r) >= 0.5);
+  if(!good) return;
+  plPick.results = [good, ...rankResults(found).filter(r=>r !== good)];
+  previewResult(0);
+}
 function showResults(){
   const res = plPick && plPick.results; if(!res){ renderPickBar(); return; }
-  const at = plPick.searchAt, far = r=>at ? distKm(at[0], at[1], r.lat, r.lng) > 60 : false;
-  const qs = plPick.queries || [plPick.inText];
-  const fits = r=>Math.max(...qs.map(q=>Math.max(nameMatch(q, r.name), nameMatch(q, String(r.address || '').split(',')[0]))));
-  // far-away places only stay when their name really matches (no random villages with a similar word)
-  plPick.results = [...res.filter(r=>!far(r)), ...res.filter(r=>far(r) && fits(r) >= 0.5)];
-  const best = plPick.results[0];
+  plPick.results = rankResults(res);
+  const far = farFromSearch, best = plPick.results[0];
   if(best && (!far(best) || plPick.searchZ <= 8)) previewResult(0);
   else { plPick.nothingNear = true; plPick.listOpen = false; renderPickBar(); }
 }
@@ -7138,6 +7162,7 @@ function renderPickBar(){
     bar.innerHTML = `<div class="pp-t"><b>Search</b> for the place, paste a Google Maps${canImport ? ' or TikTok' : ''} link, or <b>tap the map</b></div>
       <div class="pp-row"><input id="plPickIn" type="search" enterkeyhint="search" placeholder="e.g. Café Savoy Praha" autocomplete="off" aria-label="Place name or Google Maps link" value="${esc(plPick.inText||'')}">
       <button type="button" class="pp-go">${plPick.searching ? '…' : 'Find'}</button><button type="button" class="pp-cancel">Cancel</button></div>
+      ${plPick.searching && !plPick.msg && plPick.previewI == null ? `<div class="pp-wait" role="status"><span class="busy-spin" aria-hidden="true"></span><span>Looking for <b>${esc(plPick.inText || '')}</b>${plPick.areaName && plPick.searchZ === 13 ? ` in ${esc(plPick.areaName)}` : ''}…</span></div>` : ''}
       ${plPick.msg ? `<div class="pp-msg${plPick.importing ? ' busy' : ''}" role="status">${plPick.importing ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}<span>${esc(plPick.msg)}</span></div>` : ''}
       ${res && plPick.nothingNear ? `<div class="pp-near">
           <div>Couldn’t find <b>${esc(plPick.inText || '')}</b> ${plPick.areaName && plPick.searchZ === 13 ? `in ${esc(plPick.areaName)}` : 'near here'}.</div>
