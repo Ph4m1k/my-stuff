@@ -354,6 +354,185 @@ export async function locate(p: Json, fetchFn: typeof fetch) {
   return null;
 }
 
+
+// ---------------- shop pages (for the Wishlist): name, price, photo… ----------------
+// Most shops describe the product for Google inside the page ("structured data"); that's read first (free and exact).
+// Only when the page doesn't say clearly, the AI reads the page text.
+const CUR_SIGNS: Record<string, string> = { 'kč': 'CZK', 'czk': 'CZK', '€': 'EUR', 'eur': 'EUR', 'zł': 'PLN', 'pln': 'PLN', '£': 'GBP', 'gbp': 'GBP', '$': 'USD', 'usd': 'USD', 'ft': 'HUF', 'huf': 'HUF', '¥': 'JPY', 'jpy': 'JPY', 'chf': 'CHF', 'sek': 'SEK', 'nok': 'NOK', 'dkk': 'DKK', 'cny': 'CNY', 'rmb': 'CNY', 'krw': 'KRW', '₩': 'KRW', 'vnd': 'VND', '₫': 'VND' };
+const curCode = (c: unknown) => { const k = String(c || '').trim().toLowerCase(); return CUR_SIGNS[k] || (/^[a-z]{3}$/.test(k) ? k.toUpperCase() : ''); };
+function toPrice(v: unknown): number | null {
+  if (v == null) return null;
+  if (typeof v === 'number') return isFinite(v) && v > 0 ? v : null;
+  let t = String(v).replace(/[^\d.,]/g, '');
+  if (!t) return null;
+  if (t.includes(',') && t.includes('.')) t = t.lastIndexOf(',') > t.lastIndexOf('.') ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+  else if (t.includes(',')) t = /,\d{1,2}$/.test(t) ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+  else if ((t.match(/\./g) || []).length > 1 || /\.\d{3}$/.test(t)) t = t.replace(/\./g, '');
+  const n = parseFloat(t);
+  return isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
+}
+const decode = (s: string) => s.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  .replace(/&nbsp;/g, ' ').replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(+n)).replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)));
+const plain = (s: unknown, max = 400) => decode(String(s || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, max);
+function shortDesc(s: string) {
+  const t = plain(s, 600); if (!t) return '';
+  const parts = t.split(/(?<=[.!?])\s+/); let out = '';
+  for (const p of parts) { if ((out + ' ' + p).trim().length > 280) break; out = (out + ' ' + p).trim(); }
+  return out || t.slice(0, 280);
+}
+function privateHost(u: string) {
+  const h = hostOf(u).toLowerCase();
+  return !h || h === 'localhost' || h.endsWith('.local') || h.endsWith('.internal') || /^(127\.|10\.|192\.168\.|169\.254\.|0\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h) || h === '[::1]' || /^\[?(fc|fd|fe80)/i.test(h);
+}
+export function productFromHtml(html: string, pageUrl: string) {
+  const out: Json = { name: '', price: null, currency: '', description: '', brand: '', image: '', shop: '' };
+  const abs = (u: unknown) => { try { return u ? new URL(String(u), pageUrl).href : ''; } catch { return ''; } };
+  const imgOf = (v: Json): string => !v ? '' : typeof v === 'string' ? v : Array.isArray(v) ? imgOf(v[0]) : (v.url || v.contentUrl || '');
+  // 1) structured data (JSON-LD)
+  const found: Json[] = [];
+  const walk = (o: Json) => {
+    if (!o || typeof o !== 'object') return;
+    if (Array.isArray(o)) { o.forEach(walk); return; }
+    const t = ([] as string[]).concat(o['@type'] || []).map(String);
+    if (t.some((x) => /^(Product|ProductGroup|IndividualProduct|Vehicle|Book)$/i.test(x))) found.push(o);
+    if (o['@graph']) walk(o['@graph']);
+    if (o.mainEntity) walk(o.mainEntity);
+  };
+  for (const m of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try { walk(JSON.parse(m[1].trim().replace(/^\s*<!--|-->\s*$/g, ''))); } catch (_) { /* a broken block: skip it */ }
+  }
+  const p = found[0];
+  if (p) {
+    out.name = plain(p.name, 200);
+    out.description = shortDesc(p.description || '');
+    out.brand = plain(typeof p.brand === 'object' ? p.brand?.name : p.brand, 80);
+    out.image = abs(imgOf(p.image));
+    const offers = ([] as Json[]).concat(p.offers || [], ...(p.hasVariant || []).map((v: Json) => v.offers || []));
+    for (const o of offers.flatMap((x: Json) => x && x.offers ? [].concat(x.offers) : [x])) {
+      const pr = toPrice(o?.price ?? o?.lowPrice ?? o?.priceSpecification?.price ?? (Array.isArray(o?.priceSpecification) ? o.priceSpecification[0]?.price : null));
+      if (pr != null) { out.price = pr; out.currency = curCode(o.priceCurrency || o.priceSpecification?.priceCurrency || (Array.isArray(o?.priceSpecification) ? o.priceSpecification[0]?.priceCurrency : '')); break; }
+    }
+  }
+  // 2) the page's labels for sharing (og:… / product:…), and microdata
+  const meta = (names: string[]) => {
+    for (const n of names) {
+      const re = new RegExp(`<meta[^>]+(?:property|name|itemprop)=["']${n.replace(/[.:]/g, '\\$&')}["'][^>]*>`, 'i');
+      const tag = re.exec(html)?.[0]; const c = tag && /content=["']([^"']*)["']/i.exec(tag);
+      if (c && c[1].trim()) return decode(c[1].trim());
+    }
+    return '';
+  };
+  out.name = out.name || plain(meta(['og:title', 'twitter:title']), 200) || plain((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html) || [])[1], 200);
+  if (out.price == null) { out.price = toPrice(meta(['product:price:amount', 'og:price:amount', 'price'])); if (out.price != null) out.currency = curCode(meta(['product:price:currency', 'og:price:currency', 'priceCurrency'])); }
+  if (out.price == null) {
+    const ip = /itemprop=["']price["'][^>]*content=["']([^"']+)["']/i.exec(html) || /content=["']([^"']+)["'][^>]*itemprop=["']price["']/i.exec(html);
+    if (ip) { out.price = toPrice(ip[1]); const ic = /itemprop=["']priceCurrency["'][^>]*content=["']([^"']+)["']/i.exec(html); out.currency = curCode(ic?.[1]); }
+  }
+  out.description = out.description || shortDesc(meta(['og:description', 'description', 'twitter:description']));
+  out.image = out.image || abs(meta(['og:image', 'og:image:secure_url', 'twitter:image', 'twitter:image:src']));
+  out.shop = plain(meta(['og:site_name', 'application-name']), 60) || hostOf(pageUrl).replace(/^www\./, '');
+  // a page title often ends with " | Shop name": drop that
+  if (out.shop && out.name) out.name = out.name.replace(new RegExp(`\\s*[|\\-–—:]\\s*${out.shop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'i'), '').trim();
+  return out;
+}
+function pageText(html: string) {
+  return decode(html.replace(/<(script|style|noscript|svg|template|iframe)[\s\S]*?<\/\1>/gi, ' ').replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<(br|\/p|\/div|\/li|\/h\d|\/tr)[^>]*>/gi, '\n').replace(/<[^>]+>/g, ' ')).replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
+}
+async function askClaudeProduct(text: string, link: string, cats: string[], key: string, fetchFn: typeof fetch) {
+  const prompt = `You read the text of an online shop's product page and pull out the product details.
+Reply with only a JSON object like {"name":"...","price":1299.9,"currency":"CZK","description":"...","category":"..."}.
+- name: the product's name as the shop shows it, without the shop's name or marketing phrases.
+- price: the current price for one piece (the sale price if there is one), a plain number with a dot for decimals; null if the page shows no price. Never guess a price.
+- currency: ISO 4217 code (Kč = CZK, € = EUR, zł = PLN, £ = GBP; $ = USD unless the page says otherwise); null if unknown.
+- description: one or two plain sentences: what it is and its key details (model, size, colour, capacity…). No marketing claims.
+- category: the best fit from this list, copied exactly, or "" if none fits: ${JSON.stringify(cats.slice(0, 60))}
+Shop link: ${link}
+Page text:
+"""
+${text.slice(0, 14000)}
+"""`;
+  const r = await fetchFn('https://api.anthropic.com/v1/messages', {
+    method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: MODEL, max_tokens: 500, messages: [{ role: 'user', content: prompt }] }),
+  });
+  if (!r.ok) throw new Error('claude ' + r.status);
+  const j = await r.json(); const t = (j.content || []).map((c: Json) => c.text || '').join('');
+  const a = t.indexOf('{'), b = t.lastIndexOf('}');
+  return a >= 0 && b > a ? JSON.parse(t.slice(a, b + 1)) : {};
+}
+const BLOCKED = "That shop doesn't let apps read its pages.";
+// the text you copied from the shop page yourself (works for every shop: your browser already opened it)
+async function productFromText(text: string, link: string, cats: string[], key: string, fetchFn: typeof fetch) {
+  if (!key) return { ok: false, error: 'The AI key is missing in Supabase.' };
+  try {
+    const a = await askClaudeProduct(text, link || 'not given', cats, key, fetchFn);
+    const product = { name: plain(a.name, 200), price: toPrice(a.price), currency: curCode(a.currency), description: plain(a.description, 300), brand: '', shop: link ? hostOf(link).replace(/^www\./, '') : '', category: cats.includes(a.category) ? a.category : '' };
+    if (!product.name && product.price == null) return { ok: false, error: "Couldn't find product details in that text. Make sure you copied the product page." };
+    return { ok: true, how: 'text', url: link, product, photo: null };
+  } catch (_) { return { ok: false, error: "That didn't work. Try again in a moment." }; }
+}
+// shops that block apps sometimes still open through a free page-reading service
+async function viaReader(link: string, fetchFn: typeof fetch) {
+  try {
+    const r = await fetchFn('https://r.jina.ai/' + link, { headers: { Accept: 'application/json', 'X-Return-Format': 'markdown' } });
+    if (!r.ok) return '';
+    const j = await r.json(), d = j && j.data || {};
+    const text = `${d.title || ''}\n${d.content || ''}`;
+    return /just a moment|captcha|verification|robot|access denied|not found/i.test(String(d.title || '')) || text.length < 300 ? '' : text;
+  } catch (_) { return ''; }
+}
+export async function readProduct(link: string, cats: string[], key: string, fetchFn: typeof fetch, pasted = '') {
+  if (pasted) return productFromText(pasted, link, cats, key, fetchFn);
+  if (privateHost(link)) return { ok: false, error: "That isn't a shop page on the internet." };
+  const quick = withTimeout(fetchFn, 12000);
+  let r: Response | null = null;
+  try {
+    r = await quick(link, { redirect: 'follow', headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'cs-CZ,cs;q=0.9,en;q=0.8' } });
+  } catch (_) { r = null; }
+  const finalUrl = (r && r.url) || link;
+  const html = r && r.ok ? (await r.text()).slice(0, 3_000_000) : '';
+  const blocked = !html || /captcha|are you a robot|access denied|enable javascript and cookies|just a moment/i.test(html.slice(0, 20000)) && !/application\/ld\+json/i.test(html);
+  if (blocked && !/og:title|application\/ld\+json/i.test(html)) {
+    // the shop turned us away: try the page-reading service, and let the AI read what it saw
+    const text = key ? await viaReader(link, withTimeout(fetchFn, 20000)) : '';
+    if (text) { const t = await productFromText(text, link, cats, key, fetchFn); if (t.ok) return { ...t, how: 'reader' }; }
+    return { ok: false, blocked: true, error: BLOCKED };
+  }
+  const prod: Json = productFromHtml(html, finalUrl);
+  let how = 'page';
+  // not clear from the page itself: the AI reads the page text (and picks a category)
+  if (key && (!prod.name || prod.price == null || (cats.length && !prod.category))) {
+    try {
+      // the page already said what it is: only a few words needed to pick the category (cheaper and quicker)
+      const enough = prod.name && prod.price != null;
+      const a = await askClaudeProduct(enough ? `${prod.name}\n${prod.brand || ''}\n${prod.description || ''}` : pageText(html), finalUrl, cats, key, fetchFn);
+      if (!prod.name && a.name) prod.name = plain(a.name, 200);
+      if (prod.price == null && toPrice(a.price) != null) { prod.price = toPrice(a.price); prod.currency = curCode(a.currency); }
+      if (!prod.description && a.description) prod.description = plain(a.description, 300);
+      if (a.category && cats.includes(a.category)) prod.category = a.category;
+      how = 'ai';
+    } catch (_) { /* keep what the page gave */ }
+  }
+  // the photo: brought along (shops' picture links can stop working)
+  let photo: Json = null;
+  if (prod.image && !privateHost(prod.image)) {
+    try {
+      const ir = await fetchFn(prod.image, { headers: { 'User-Agent': UA, Accept: 'image/avif,image/webp,image/png,image/jpeg,*/*;q=0.8', Referer: finalUrl } });
+      const type = (ir.headers.get('content-type') || '').split(';')[0];
+      if (ir.ok && /^image\/(jpeg|png|webp|gif)$/.test(type)) {
+        const bytes = new Uint8Array(await ir.arrayBuffer());
+        if (bytes.length > 500 && bytes.length < 4_000_000) {
+          let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+          photo = { type, b64: btoa(bin) };
+        }
+      }
+    } catch (_) { /* no photo then */ }
+  }
+  if (!prod.name && prod.price == null) return { ok: false, error: "Couldn't find product details on that page. Fill it in yourself." };
+  return { ok: true, how, url: finalUrl, product: { name: prod.name, price: prod.price, currency: prod.currency || '', description: prod.description || '', brand: prod.brand || '', shop: prod.shop || '', category: prod.category || '' }, photo };
+}
+
 // ---------------- the whole job ----------------
 // no single outside service may hold everything up: each request gets at most 25 seconds
 const withTimeout = (fn: typeof fetch, ms: number) => ((input: any, init: any = {}) => {
@@ -382,10 +561,16 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
 
   // the link (the Shortcut may send the whole shared text)
   const raw = await req.text();
-  let text = raw, hint = '', inboxId = '';
-  try { const j = JSON.parse(raw); text = j.url || j.text || raw; hint = String(j.hint || '').slice(0, 500).trim(); inboxId = String(j.inboxId || ''); } catch (_) { /* plain text */ }
-  const link = (/https?:\/\/[^\s"'<>]+/.exec(String(text)) || [])[0] || '';
+  let text = raw, hint = '', inboxId = '', kind = '', cats: string[] = [], pasted = '', safeUrl = '';
+  try {
+    const j = JSON.parse(raw); text = j.url || j.text || raw; hint = String(j.hint || '').slice(0, 500).trim(); inboxId = String(j.inboxId || '');
+    kind = String(j.kind || ''); cats = Array.isArray(j.categories) ? j.categories.map(String).slice(0, 60) : [];
+    pasted = String(j.pageText || '').slice(0, 60000); safeUrl = String(j.url || '');
+  } catch (_) { /* plain text */ }
+  const link = (/https?:\/\/[^\s"'<>]+/.exec(String(kind === 'product' ? (pasted ? safeUrl : text) : text)) || [])[0] || '';
+  if (kind === 'product' && !link && pasted) return reply(await readProduct('', cats, env.get('ANTHROPIC_API_KEY') || '', fetchFn, pasted));
   if (!link) return reply({ ok: false, error: 'No link found.' }, 400);
+  if (kind === 'product') return reply(await readProduct(link, cats, env.get('ANTHROPIC_API_KEY') || '', fetchFn, pasted));   // a shop page for the Wishlist
   if (isGoogleShort(link)) {
     try { const g = await openGoogleShort(link, fetchFn); return reply({ ok: true, resolved: g.resolved, lat: g.lat, lng: g.lng }); }
     catch (_) { return reply({ ok: false, error: "Couldn't open that Google Maps link." }); }

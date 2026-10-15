@@ -724,6 +724,8 @@ HOST.importLink = async (url, extra)=>{
   if(!j) return { ok:false, error:"That didn't work (" + r.status + "). Try again." };
   return j;
 };
+// a shop page for the Wishlist: your Supabase reads it (or the page text you copied) and sends back name, price, photo…
+HOST.readProduct = (url, categories, pageText)=>HOST.importLink(url || '', { kind: 'product', categories: (categories || []).slice(0, 60), ...(pageText ? { pageText: String(pageText).slice(0, 60000) } : {}) });
 // place search: MapTiler, plus Photon (OpenStreetMap), which knows far more places in countries like China
 const PH_SKIP = new Set(['highway', 'railway', 'public_transport', 'boundary', 'route', 'waterway', 'power', 'barrier', 'tunnel', 'bridge']);
 function distKm(a, b, c, d){ const k = Math.PI/180, x = (d-b)*k*Math.cos((a+c)/2*k), y = (c-a)*k; return Math.sqrt(x*x+y*y)*6371; }
@@ -1253,6 +1255,8 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .fill-actions .add-btn:disabled{opacity:.45;cursor:default;}
   .fill-status{font-size:0.8rem;color:var(--muted);}
   .fill-status.ok{color:var(--accent);} .fill-status.err{color:#a13f3f;}
+  .read-status{display:flex;align-items:center;margin-top:6px;}
+  .read-status:empty{display:none;}
   .plain-select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:3px;background:var(--paper);color:var(--ink);
     font-family:-apple-system,sans-serif;font-size:0.9rem;}
   .just-filled{animation:justFilled 1.4s ease;}
@@ -2137,12 +2141,13 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
         <input id="w_link" type="url" inputmode="url" placeholder="https://…" autocomplete="off">
         <a class="link-open" id="w_linkOpen" target="_blank" rel="noopener noreferrer" title="Open shop page" aria-label="Open shop page"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4h5v5M16 4l-7 7M14 11.5V16H4V6h4.5"/></svg></a>
       </div>
+      <div class="fill-status read-status" id="w_readStatus" aria-live="polite"></div>
       <button type="button" class="link-btn fill-toggle" id="w_fillToggle">Fill in the details from the shop page</button>
       <div class="fill-panel" id="w_fillPanel">
         <ol class="fill-steps">
           <li>Open the product page in the shop.</li>
           <li>Press <kbd>Ctrl</kbd>+<kbd>A</kbd>, then <kbd>Ctrl</kbd>+<kbd>C</kbd> to copy the whole page (on a Mac, <kbd>⌘</kbd> instead of Ctrl).</li>
-          <li>Paste it here, then click <b>Fill in details</b>. Claude reads it and fills in the name, price and description.</li>
+          <li>Paste it here, then click <b>Fill in details</b>. The AI reads it and fills in the name, price and description.</li>
         </ol>
         <textarea id="w_fillText" placeholder="Paste the shop page here"></textarea>
         <div class="fill-actions"><button type="button" class="add-btn" id="w_fillGo" disabled>Fill in details</button><span class="fill-status" id="w_fillStatus" aria-live="polite"></span></div>
@@ -4068,6 +4073,7 @@ function openWishForm(w){
   document.getElementById('w_fillPanel').classList.remove('open');
   document.getElementById('w_fillText').value=''; setFillStatus('');
   document.getElementById('w_fillGo').disabled = true;
+  setReadStatus(''); lastReadLink = w ? normalizeLink(w.link || '') : ''; if(readCtl){ readCtl.abort = true; readCtl = null; }
   document.getElementById('w_formError').style.display='none';
   updateFillUI();
   document.getElementById('wishOverlay').classList.add('show');
@@ -4206,8 +4212,9 @@ function setFillStatus(text, kind){
 }
 function updateFillUI(){
   const t = document.getElementById('w_fillToggle'); if(!t) return;
-  t.style.display = sampleCap ? '' : 'none';
-  if(!sampleCap) document.getElementById('w_fillPanel').classList.remove('open');
+  const can = sampleCap || (HOST && HOST.readProduct);
+  t.style.display = can ? '' : 'none';
+  if(!can) document.getElementById('w_fillPanel').classList.remove('open');
 }
 const FILL_ERRORS = {
   not_granted: 'Filling in needs your permission to ask Claude. Allow it when asked, or fill in the details yourself.',
@@ -4222,7 +4229,20 @@ const FILL_ERRORS = {
 let fillCtl = null;
 async function fillFromShop(){
   const txt = document.getElementById('w_fillText').value.trim();
-  if(!txt || !sampleCap) return;
+  if(!txt) return;
+  if(!sampleCap && HOST && HOST.readProduct){                 // outside Claude: your Supabase's reader reads the text
+    const go = document.getElementById('w_fillGo'); go.disabled = true;
+    setFillStatus('Reading the page…');
+    const r = await HOST.readProduct(normalizeLink(document.getElementById('w_link').value), itemCategories, txt);
+    go.disabled = false;
+    if(r && r.ok){
+      const filled = applyProduct(r.product, null, false);
+      if(filled.length){ setFillStatus(`✓ Filled in ${andList(filled)}. Check them, then save.`, 'ok'); document.getElementById('w_fillText').value = ''; }
+      else setFillStatus("Couldn't find product details in that text. Make sure you copied the product page.", 'err');
+    } else setFillStatus((r && r.error) || "That didn't work. Try again.", 'err');
+    return;
+  }
+  if(!sampleCap) return;
   const go = document.getElementById('w_fillGo'); go.disabled = true;
   setFillStatus('Reading the page…');
   const link = normalizeLink(document.getElementById('w_link').value);
@@ -4270,10 +4290,66 @@ ${txt.slice(0, 40000)}
     go.disabled = !document.getElementById('w_fillText').value.trim();
   }
 }
+// ---------- paste a shop link: your Supabase reads the page and fills in what's still empty ----------
+let lastReadLink = '', readCtl = null;
+function setReadStatus(text, kind, busy){
+  const el = document.getElementById('w_readStatus'); if(!el) return;
+  el.className = 'fill-status read-status' + (kind ? ' ' + kind : '');
+  el.innerHTML = text ? `${busy ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}<span>${esc(text)}</span>` : '';
+}
+const andList = a=>a.join(', ').replace(/, ([^,]*)$/, ' and $1');
+// put a product's details into the form; onlyEmpty: leave alone anything you've already filled in
+function applyProduct(p, photo, onlyEmpty){
+  const filled = [], flash = el=>{ el.classList.remove('just-filled'); void el.offsetWidth; el.classList.add('just-filled'); };
+  const put = (id, v, label)=>{ const el = document.getElementById(id); if(!v || (onlyEmpty && el.value.trim())) return; el.value = v; flash(el); filled.push(label); };
+  put('w_name', p && p.name, 'name');
+  put('w_desc', p && p.description, 'description');
+  if(p && p.category && itemCategories.includes(p.category) && !(onlyEmpty && pickerValue('wcat'))){ setPickerValue('wcat', p.category); flash(document.getElementById('w_cat')); filled.push('category'); }
+  const price = p ? Number(p.price) : NaN, row = document.querySelector('#wPriceRow .cost-row');
+  if(row && Number.isFinite(price) && price > 0){
+    const amt = row.querySelector('.camount'), curSel = row.querySelector('.ccur');
+    if(!(onlyEmpty && String(amt.value).trim())){
+      const cur = p.currency && CURRENCIES.includes(String(p.currency).toUpperCase()) ? String(p.currency).toUpperCase() : BASE;
+      amt.value = price;
+      if(curSel.value !== cur){ curSel.value = cur; curSel.dispatchEvent(new Event('change')); }
+      amt.dispatchEvent(new Event('input')); flash(amt);
+      filled.push(p.currency && !CURRENCIES.includes(String(p.currency).toUpperCase()) ? `price (in ${p.currency}, which isn't in your list, so it's set to Kč; check it)` : 'price');
+    }
+  }
+  if(photo && photo.b64 && !wishPhoto.file && !document.getElementById('w_photoBox').classList.contains('has-photo')){
+    try{
+      const bin = atob(photo.b64), bytes = new Uint8Array(bin.length);
+      for(let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      wishPhoto.use(new File([bytes], 'shop-photo.' + (photo.type.split('/')[1] || 'jpg'), {type: photo.type}));
+      filled.push('photo');
+    }catch(e){}
+  }
+  return filled;
+}
+async function readShopLink(){
+  if(!(HOST && HOST.readProduct)) return;
+  const link = normalizeLink(document.getElementById('w_link').value);
+  if(!/^https?:\/\/[^\s]+\.[^\s]+/i.test(link) || link === lastReadLink) return;
+  lastReadLink = link;
+  const mine = readCtl = {};
+  setReadStatus('Reading the shop page…', '', true);
+  const r = await HOST.readProduct(link, itemCategories);
+  if(readCtl !== mine || !document.getElementById('wishOverlay').classList.contains('show')) return;   // the form was closed or the link changed meanwhile
+  readCtl = null;
+  if(r && r.ok){
+    const filled = applyProduct(r.product, r.photo, true);
+    setReadStatus(filled.length ? `✓ Filled in ${andList(filled)} from the shop page. Check them, then save.` : 'Read the shop page; your boxes were already filled in, so nothing changed.', 'ok');
+  }else if(r && r.blocked){
+    setReadStatus('This shop doesn’t let apps read its pages. Copy the page instead (steps below), or fill it in yourself.', 'err');
+    document.getElementById('w_fillPanel').classList.add('open');
+  }else setReadStatus((r && r.error) || "Couldn't read that page. Fill it in yourself.", 'err');
+}
 function setupWishForm(){
   const link = document.getElementById('w_link');
   link.addEventListener('input', updateLinkOpen);
-  link.addEventListener('blur', ()=>{ if(link.value.trim()) link.value = normalizeLink(link.value); updateLinkOpen(); });
+  link.addEventListener('blur', ()=>{ if(link.value.trim()) link.value = normalizeLink(link.value); updateLinkOpen(); readShopLink(); });
+  link.addEventListener('paste', ()=>setTimeout(()=>{ updateLinkOpen(); readShopLink(); }, 0));      // paste a link: it reads the page straight away
+  link.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); readShopLink(); } });
   document.getElementById('w_fillToggle').addEventListener('click', ()=>{
     const panel = document.getElementById('w_fillPanel'); panel.classList.toggle('open');
     if(panel.classList.contains('open')) document.getElementById('w_fillText').focus();
