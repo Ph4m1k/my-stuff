@@ -1257,6 +1257,11 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .fill-status.ok{color:var(--accent);} .fill-status.err{color:#a13f3f;}
   .read-status{display:flex;align-items:center;margin-top:6px;}
   .read-status:empty{display:none;}
+  .read-list{display:block;color:var(--ink);}
+  .rl-items{display:flex;flex-direction:column;gap:5px;margin-top:7px;max-height:260px;overflow-y:auto;}
+  .rl-item{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:5px;background:var(--paper);color:var(--ink);font:inherit;font-size:0.84rem;text-align:left;cursor:pointer;}
+  .rl-item:hover{border-color:var(--accent);}
+  .rl-item b{flex:0 0 auto;font-weight:600;}
   .plain-select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:3px;background:var(--paper);color:var(--ink);
     font-family:-apple-system,sans-serif;font-size:0.9rem;}
   .just-filled{animation:justFilled 1.4s ease;}
@@ -4336,6 +4341,18 @@ async function readShopLink(){
   const r = await HOST.readProduct(link, itemCategories);
   if(readCtl !== mine || !document.getElementById('wishOverlay').classList.contains('show')) return;   // the form was closed or the link changed meanwhile
   readCtl = null;
+  if(r && r.ok && r.list){                                 // a page with several products: let you pick
+    const el = document.getElementById('w_readStatus');
+    el.className = 'fill-status read-status read-list';
+    el.innerHTML = `<span>This page shows ${r.items.length} products${r.page ? ` (“${esc(r.page)}”)` : ''}. Which one do you want?</span>
+      <div class="rl-items">${r.items.map((it, i)=>`<button type="button" class="rl-item" data-i="${i}"><span>${esc(it.name)}</span>${it.price ? `<b>${esc(money(it.price, it.currency || BASE))}</b>` : ''}</button>`).join('')}</div>`;
+    el.querySelectorAll('.rl-item').forEach(b=>b.onclick = ()=>{
+      const it = r.items[+b.dataset.i];
+      if(it.url){ document.getElementById('w_link').value = it.url; updateLinkOpen(); lastReadLink = ''; readShopLink(); }   // open that product's own page
+      else { const filled = applyProduct({name: it.name, price: it.price, currency: it.currency}, null, false); setReadStatus(`✓ Filled in ${andList(filled)}. Check them, then save.`, 'ok'); }
+    });
+    return;
+  }
   if(r && r.ok){
     const filled = applyProduct(r.product, r.photo, true);
     setReadStatus(filled.length ? `✓ Filled in ${andList(filled)} from the shop page. Check them, then save.` : 'Read the shop page; your boxes were already filled in, so nothing changed.', 'ok');

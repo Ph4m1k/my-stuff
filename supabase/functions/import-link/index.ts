@@ -402,6 +402,7 @@ export function productFromHtml(html: string, pageUrl: string) {
     try { walk(JSON.parse(m[1].trim().replace(/^\s*<!--|-->\s*$/g, ''))); } catch (_) { /* a broken block: skip it */ }
   }
   const p = found[0];
+  out.sure = !!p;                                         // the page says plainly: this is one product
   if (p) {
     out.name = plain(p.name, 200);
     out.description = shortDesc(p.description || '');
@@ -423,7 +424,8 @@ export function productFromHtml(html: string, pageUrl: string) {
     return '';
   };
   out.name = out.name || plain(meta(['og:title', 'twitter:title']), 200) || plain((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html) || [])[1], 200);
-  if (out.price == null) { out.price = toPrice(meta(['product:price:amount', 'og:price:amount', 'price'])); if (out.price != null) out.currency = curCode(meta(['product:price:currency', 'og:price:currency', 'priceCurrency'])); }
+  if (out.price == null) { out.price = toPrice(meta(['product:price:amount', 'og:price:amount', 'price'])); if (out.price != null) { out.currency = curCode(meta(['product:price:currency', 'og:price:currency', 'priceCurrency'])); out.sure = true; } }
+  if (!out.sure && /<meta[^>]+og:type["'][^>]*content=["'](product|og:product)["']/i.test(html)) out.sure = true;
   if (out.price == null) {
     const ip = /itemprop=["']price["'][^>]*content=["']([^"']+)["']/i.exec(html) || /content=["']([^"']+)["'][^>]*itemprop=["']price["']/i.exec(html);
     if (ip) { out.price = toPrice(ip[1]); const ic = /itemprop=["']priceCurrency["'][^>]*content=["']([^"']+)["']/i.exec(html); out.currency = curCode(ic?.[1]); }
@@ -431,16 +433,35 @@ export function productFromHtml(html: string, pageUrl: string) {
   out.description = out.description || shortDesc(meta(['og:description', 'description', 'twitter:description']));
   out.image = out.image || abs(meta(['og:image', 'og:image:secure_url', 'twitter:image', 'twitter:image:src']));
   out.shop = plain(meta(['og:site_name', 'application-name']), 60) || hostOf(pageUrl).replace(/^www\./, '');
+  const fold2 = (x: string) => x.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  if (out.description && (out.description.length < 40 || fold2(out.description) === fold2(out.shop) || fold2(out.description) === fold2(out.name) || fold2(out.name).includes(fold2(out.description)))) out.description = '';
   // a page title often ends with " | Shop name": drop that
   if (out.shop && out.name) out.name = out.name.replace(new RegExp(`\\s*[|\\-–—:]\\s*${out.shop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'i'), '').trim();
   return out;
+}
+// links on the page with their words (so each product in a list can open its own page)
+function pageLinks(html: string, pageUrl: string) {
+  const host = hostOf(pageUrl), out: { href: string; text: string }[] = [];
+  for (const m of html.matchAll(/<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    let href = ''; try { href = new URL(decode(m[1]), pageUrl).href; } catch { continue; }
+    if (hostOf(href) !== host || href === pageUrl) continue;
+    const alt = (/alt=["']([^"']+)["']/i.exec(m[2]) || [])[1] || '';
+    const text = plain(m[2], 200) || plain(alt, 200);
+    if (text) out.push({ href, text });
+  }
+  return out.slice(0, 400);
 }
 function pageText(html: string) {
   return decode(html.replace(/<(script|style|noscript|svg|template|iframe)[\s\S]*?<\/\1>/gi, ' ').replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(/<(br|\/p|\/div|\/li|\/h\d|\/tr)[^>]*>/gi, '\n').replace(/<[^>]+>/g, ' ')).replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
 }
-async function askClaudeProduct(text: string, link: string, cats: string[], key: string, fetchFn: typeof fetch) {
-  const prompt = `You read the text of an online shop's product page and pull out the product details.
+async function askClaudeProduct(text: string, link: string, cats: string[], key: string, fetchFn: typeof fetch, checkList = false) {
+  const listPart = checkList ? `
+First decide what kind of page it is:
+- "one": the page is about one product (maybe in several sizes or colours).
+- "list": the page shows several different products to choose from (a category, collection, search or shop page). Then also give "items": up to 20 of the products shown, each {"name":"...","price":200,"currency":"EUR"}, in the order they appear, and leave name and price of the main object empty.
+Add "kind":"one" or "kind":"list" to the JSON.` : '';
+  const prompt = `You read the text of an online shop's product page and pull out the product details.${listPart}
 Reply with only a JSON object like {"name":"...","price":1299.9,"currency":"CZK","description":"...","category":"..."}.
 - name: the product's name as the shop shows it, without the shop's name or marketing phrases.
 - price: the current price for one piece (the sale price if there is one), a plain number with a dot for decimals; null if the page shows no price. Never guess a price.
@@ -454,7 +475,7 @@ ${text.slice(0, 14000)}
 """`;
   const r = await fetchFn('https://api.anthropic.com/v1/messages', {
     method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ model: MODEL, max_tokens: 500, messages: [{ role: 'user', content: prompt }] }),
+    body: JSON.stringify({ model: MODEL, max_tokens: checkList ? 1500 : 500, messages: [{ role: 'user', content: prompt }] }),
   });
   if (!r.ok) throw new Error('claude ' + r.status);
   const j = await r.json(); const t = (j.content || []).map((c: Json) => c.text || '').join('');
@@ -501,12 +522,23 @@ export async function readProduct(link: string, cats: string[], key: string, fet
   }
   const prod: Json = productFromHtml(html, finalUrl);
   let how = 'page';
-  // not clear from the page itself: the AI reads the page text (and picks a category)
-  if (key && (!prod.name || prod.price == null || (cats.length && !prod.category))) {
+  // not clear from the page itself: the AI reads the page text (says if it's one product or a list, and picks a category)
+  if (key && (!prod.sure || !prod.name || prod.price == null || !prod.description || (cats.length && !prod.category))) {
     try {
-      // the page already said what it is: only a few words needed to pick the category (cheaper and quicker)
-      const enough = prod.name && prod.price != null;
-      const a = await askClaudeProduct(enough ? `${prod.name}\n${prod.brand || ''}\n${prod.description || ''}` : pageText(html), finalUrl, cats, key, fetchFn);
+      // the page already said what it is (and describes it): only a few words needed to pick the category (cheaper and quicker)
+      const enough = prod.sure && prod.name && prod.price != null && prod.description;
+      const a = await askClaudeProduct(enough ? `${prod.name}\n${prod.brand || ''}\n${prod.description || ''}` : pageText(html), finalUrl, cats, key, fetchFn, !prod.sure);
+      if (!prod.sure && a.kind === 'list' && Array.isArray(a.items) && a.items.length > 1) {
+        const links = pageLinks(html, finalUrl);
+        const items = a.items.slice(0, 20).map((it: Json) => {
+          const name = plain(it.name, 160); if (!name) return null;
+          let best = '', bs = 0; for (const l of links) { const sc = nameScore(name, l.text); if (sc > bs) { bs = sc; best = l.href; } }
+          return { name, price: toPrice(it.price), currency: curCode(it.currency), url: bs >= 0.6 ? best : '' };
+        }).filter(Boolean);
+        if (items.length > 1) return { ok: true, list: true, url: finalUrl, page: prod.name || '', shop: prod.shop || '', items };
+      }
+      if (!prod.sure && a.name) prod.name = plain(a.name, 200);
+      if (!prod.sure && toPrice(a.price) != null) { prod.price = toPrice(a.price); prod.currency = curCode(a.currency); }
       if (!prod.name && a.name) prod.name = plain(a.name, 200);
       if (prod.price == null && toPrice(a.price) != null) { prod.price = toPrice(a.price); prod.currency = curCode(a.currency); }
       if (!prod.description && a.description) prod.description = plain(a.description, 300);
