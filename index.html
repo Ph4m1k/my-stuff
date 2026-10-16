@@ -528,6 +528,24 @@ HOST.createMap = el=>{
     }
   }
   map.on('styledata', englishLabels);
+  let routeData = null;
+  function applyRoute(){
+    try{
+      if(!map.isStyleLoaded()) return;                   // (drawn again when the map style has loaded)
+      const data = { type: 'FeatureCollection', features: routeData ? [{ type: 'Feature', properties: { dashed: routeData.dashed ? 1 : 0 }, geometry: { type: 'LineString', coordinates: routeData.coords } }] : [] };
+      const src = map.getSource('ms-route');
+      if(src){ src.setData(data); return; }
+      map.addSource('ms-route', { type: 'geojson', data });
+      const base = { type: 'line', source: 'ms-route', layout: { 'line-join': 'round', 'line-cap': 'round' } };
+      map.addLayer({ ...base, id: 'ms-route-edge', paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.8 }, filter: ['==', ['get', 'dashed'], 0] });
+      map.addLayer({ ...base, id: 'ms-route-line', paint: { 'line-color': '#2f6fdb', 'line-width': 4.5 }, filter: ['==', ['get', 'dashed'], 0] });
+      map.addLayer({ ...base, id: 'ms-route-dash', layout: { 'line-join': 'round', 'line-cap': 'butt' }, paint: { 'line-color': '#2f6fdb', 'line-width': 3.5, 'line-dasharray': [2, 1.6] }, filter: ['==', ['get', 'dashed'], 1] });
+    }catch(e){}
+  }
+  map.on('styledata', ()=>{ if(routeData && !map.getSource('ms-route')) applyRoute(); });
+  map.on('load', applyRoute);
+  map.on('style.load', ()=>{ if(routeData) applyRoute(); });   // a new map style (light/dark) drops the line: draw it again
+  map.on('idle', ()=>{ if(routeData && !map.getSource('ms-route')) applyRoute(); });
   // MapTiler's logo (their free plan asks for it)
   const logo = document.createElement('a');
   logo.className = 'pm-mtlogo'; logo.href = 'https://www.maptiler.com'; logo.target = '_blank'; logo.rel = 'noopener noreferrer';
@@ -594,6 +612,8 @@ HOST.createMap = el=>{
       markers.forEach((mk, id)=>{ if(!keep.has(id)){ mk.marker.remove(); markers.delete(id); } });
     },
     redraw(){ map.resize(); },
+    // the route planner's line: [[lng, lat], …]; dashed for public transport (straight lines between stops)
+    setRoute(coords, opt){ routeData = coords && coords.length > 1 ? { coords, dashed: !!(opt && opt.dashed) } : null; applyRoute(); },
     setProvider(){}, retrySnap(){}, reloadTiles(){},
   };
   // places drawn on the map (cafés, museums, stations…) can be tapped, like in Google Maps
@@ -1550,10 +1570,60 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .p-err{font-family:-apple-system,sans-serif;font-size:0.8rem;color:#a13f3f;margin-top:6px;}
   .p-err:empty{display:none;}
   #placeOverlay{z-index:32;}
+  /* route planner */
+  .places.route .pl-side > :not(.rt-panel){display:none !important;}
+  .rt-panel{display:none;flex-direction:column;gap:10px;min-height:0;overflow-y:auto;font-family:-apple-system,sans-serif;font-size:0.86rem;padding-bottom:6px;}
+  .places.route .rt-panel{display:flex;}
+  .rt-panel > *{flex-shrink:0;}                 /* scroll the panel instead of squeezing its parts */
+  .places.route .pl-listbtn{display:none !important;}
+  .rt-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+  .rt-head b{font-size:0.95rem;}
+  .rt-min{display:none;border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:999px;padding:3px 10px;font-size:0.76rem;cursor:pointer;}
+  .rt-modes{display:flex;gap:6px;}
+  .rt-modes button{flex:1;padding:7px 8px;border:1px solid var(--line);border-radius:999px;background:var(--paper);color:var(--ink);font:inherit;font-size:0.82rem;cursor:pointer;}
+  .rt-modes button.on{background:var(--accent);border-color:var(--accent);color:var(--paper);}
+  .rt-start{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);}
+  .rt-start .rt-s{flex:1 1 100%;display:flex;align-items:center;gap:6px;}
+  .rt-start small{flex-basis:100%;color:var(--muted);font-size:0.74rem;}
+  .rt-start small.err{color:#a13f3f;}
+  .rt-mini-btn{border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:4px;padding:4px 9px;font-size:0.76rem;cursor:pointer;}
+  .rt-mini-btn.on{border-color:var(--accent);color:var(--accent);font-weight:600;}
+  .rt-add{display:flex;gap:6px;}
+  .rt-add input{flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:4px;background:var(--paper);color:var(--ink);font-size:0.86rem;}
+  .rt-res{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:6px;overflow:hidden;max-height:230px;overflow-y:auto;}
+  .rt-res button{display:flex;align-items:center;gap:8px;padding:7px 9px;border:none;border-bottom:1px solid var(--line);background:var(--paper);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+  .rt-res button:last-child{border-bottom:none;}
+  .rt-res button:hover{background:color-mix(in srgb, var(--accent) 10%, transparent);}
+  .rt-res small{display:block;color:var(--muted);font-size:0.72rem;}
+  .rt-res .rt-sec{padding:5px 9px;font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);background:var(--card);}
+  .rt-hint{color:var(--muted);font-size:0.76rem;}
+  .rt-stops{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;}
+  .rt-stops li{display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:var(--paper);}
+  .rt-n{flex:0 0 22px;height:22px;border-radius:50%;background:var(--accent);color:var(--paper);display:inline-flex;align-items:center;justify-content:center;font-size:0.74rem;font-weight:700;}
+  .rt-nm{flex:1;min-width:0;}
+  .rt-nm b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .rt-nm small{color:var(--muted);font-size:0.74rem;}
+  .rt-dir{flex:0 0 auto;display:inline-flex;align-items:center;gap:4px;padding:5px 8px;border:1px solid var(--line);border-radius:4px;color:var(--ink);text-decoration:none;font-size:0.74rem;}
+  .rt-x{flex:0 0 auto;border:none;background:none;color:var(--muted);font-size:1.1rem;cursor:pointer;padding:0 4px;}
+  .rt-sum{padding:8px 10px;border-radius:6px;background:color-mix(in srgb, var(--accent) 10%, transparent);font-size:0.84rem;}
+  .rt-sum small{display:block;color:var(--muted);font-size:0.74rem;margin-top:3px;}
+  .rt-acts{display:flex;flex-wrap:wrap;gap:6px;}
+  .rt-empty{color:var(--muted);font-size:0.82rem;padding:6px 2px;}
+  .pm-pin.dim{opacity:.45;}
+  .pm-pin.stop .pm-dot{background:var(--accent);border-color:var(--paper);}
+  .pm-pin.stop .pm-emo{color:var(--paper);font-weight:800;font-family:-apple-system,sans-serif;font-size:0.82rem;}
+  .pm-pin.me .pm-dot{left:-8px;top:-8px;width:16px;height:16px;min-width:0;border-radius:50%;background:#2f6fdb;border:3px solid #fff;box-shadow:0 0 0 6px rgba(47,111,219,.22);transform:none;}
+  .pm-pin.me .pm-dot .pm-emo{display:none;}
   @media (max-width:859px){
     .places{grid-template-columns:1fr;height:calc(100vh - 130px);min-height:380px;gap:0;}
     .pl-side{display:none;}
     .places.list-open .pl-side{display:flex;}
+    /* the route planner sits over the bottom of the map on a phone */
+    .places.route{position:relative;}
+    .places.route .pl-side{display:flex;position:absolute;left:0;right:0;bottom:0;max-height:55%;z-index:8;padding:10px 12px 12px;background:var(--card);border-top:1px solid var(--line);border-radius:14px 14px 0 0;box-shadow:0 -6px 20px rgba(0,0,0,.18);}
+    .places.route.rt-mini .pl-side{max-height:92px;}
+    .places.route .rt-min{display:inline-block;}
+    .places.route .pl-mapwrap{position:relative !important;left:auto !important;width:auto !important;height:auto !important;}
     .places.list-open .pl-mapwrap{position:absolute;left:-9999px;width:1px;height:1px;}
     .pl-listbtn{display:block;}
     .places.list-open .pl-listbtn{position:fixed;}
@@ -1901,6 +1971,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   <button type="button" class="nav-item" data-mod="bucket" onclick="switchModule('bucket')" title="Bucket list"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 17.5l5-8 3 4.5 2-3 5 6.5z"/><path d="M11 13V3.5l4 1.5-4 1.5"/></svg><span class="nav-label">Bucket list</span><span class="nav-n" id="navN_bucket"></span></button>
   <button type="button" class="nav-item" data-mod="notes" onclick="switchModule('notes')" title="Notes"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3.5 3.5v11.5H5z"/><path d="M12 2.5V6h3.5M7.5 10h5.5M7.5 13h5.5"/></svg><span class="nav-label">Notes</span><span class="nav-n" id="navN_notes"></span></button>
   <button type="button" class="nav-item" data-mod="places" onclick="switchModule('places')" title="Places"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17.5s5.5-5.2 5.5-9.3a5.5 5.5 0 00-11 0c0 4.1 5.5 9.3 5.5 9.3z"/><circle cx="10" cy="8.2" r="2"/></svg><span class="nav-label">Places</span><span class="nav-n" id="navN_places"></span></button>
+  <button type="button" class="nav-item" data-mod="route" onclick="switchModule('route')" title="Route planner"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="15" r="2"/><circle cx="15" cy="5" r="2"/><path d="M7 15h5.5a2.5 2.5 0 000-5h-5a2.5 2.5 0 010-5H13"/></svg><span class="nav-label">Route</span><span class="nav-n" id="navN_route"></span></button>
   <div class="side-hint" id="sideHint">Hold a module and drag it to reorder</div>
 </nav>
 <div class="side-backdrop" id="sideBackdrop" onclick="toggleSide(false)"></div>
@@ -1954,6 +2025,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
       </div>
       <button type="button" class="pl-inboxbtn" id="plInboxBtn" hidden></button>
       <div class="pl-list" id="plList"></div>
+      <div class="rt-panel" id="rtPanel" aria-label="Route planner"></div>
     </div>
     <div class="pl-mapwrap">
       <div id="plMap"></div>
@@ -2371,7 +2443,7 @@ async function init(){
   }, err=>{ placesLoaded = true; scheduleRender(); });
   db.collection('inbox').orderBy('createdAt','desc').onSnapshot(snap=>{
     inbox = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    if(currentMod==='places') renderPlaces();
+    if(currentMod==='places' || currentMod==='route') renderPlaces();
   }, err=>{});
   db.collection('notes').orderBy('updatedAt','desc').onSnapshot(snap=>{
     const all = snap.docs.map(d=>({id:d.id, ...d.data()}));
@@ -2502,9 +2574,21 @@ MODULES.places = {
   title:'Places', noun:'place', nounPlural:'places', addLabel:'+ Add place', layout:'places',
   list: ()=>places, loaded: ()=>placesLoaded,
 };
+// Route planner: the same map, used to plan the quickest way past several shops
+MODULES.route = {
+  title:'Route planner', noun:'stop', nounPlural:'stops', addLabel:'+ Add stop', layout:'places', route:true,
+  list: ()=>rt.stops, loaded: ()=>true, add: ()=>{ rt.mini = false; renderRoute(); setTimeout(()=>{ const i = document.getElementById('rtQ'); if(i) i.focus(); }, 30); },
+};
 let currentMod = 'inventory';
 try{ const m = localStorage.getItem('app-module'); if(MODULES[m]) currentMod = m; }catch(e){}
 const MOD = ()=>MODULES[currentMod];
+// the route planner's state (it's here, early, because the menu counts and the first screen may need it)
+const RT_KEY = 'route-plan';
+const rt = {on:false, stops:[], mode:'walk', start:null, startSrc:'', locating:false, locErr:'', setStart:false,
+            res:null, busy:false, err:'', q:'', results:null, searching:false, mini:false};
+try{ const sv = JSON.parse(localStorage.getItem(RT_KEY) || 'null');
+  if(sv){ rt.stops = (sv.stops || []).filter(x=>x && validLatLng(x.lat, x.lng)).slice(0, 12); rt.mode = sv.mode==='transit' ? 'transit' : 'walk'; } }catch(e){}
+
 
 // ---------- Browsing: search, sort, filters (kept per module, per browser) ----------
 const PAGE = 60, NONE = '__none__';
@@ -2654,7 +2738,7 @@ function debounce(fn, ms){ let t=null; return ()=>{ clearTimeout(t); t=setTimeou
 function switchModule(mod, opts){
   if(!MODULES[mod]) return;
   const same = mod===currentMod && F;
-  if(currentMod==='places' && mod!=='places'){ plPick = null; document.getElementById('placeOverlay').classList.remove('show'); }
+  if((currentMod==='places' || currentMod==='route') && mod!==currentMod){ plPick = null; document.getElementById('placeOverlay').classList.remove('show'); }
   if(currentMod==='notes' && mod!=='notes'){
     leaveNote();
     if(trashMode){ trashMode = false; trashSel = null; document.getElementById('notesView').classList.remove('trash-mode','editing');
@@ -2675,6 +2759,7 @@ function switchModule(mod, opts){
     document.title = `${M.title} – My stuff`;
     if(!isWide()) toggleSide(false);
     enterPlaces();
+    setRouteMode(mod==='route');
     return;
   }
   if(isNotes){
@@ -3003,6 +3088,7 @@ function updateNavCounts(){
   const g = document.getElementById('navN_bucket'); if(g) g.textContent = goalsLoaded ? goals.filter(x=>!x.done).length : '';
   const n = document.getElementById('navN_notes'); if(n) n.textContent = notesLoaded ? notes.length : '';
   const pl = document.getElementById('navN_places'); if(pl) pl.textContent = placesLoaded ? places.filter(p=>(p.status||'want')!=='been').length : '';
+  const rn = document.getElementById('navN_route'); if(rn) rn.textContent = rt.stops.length || '';
   const a = document.getElementById('navN_inventory'), b = document.getElementById('navN_wishlist');
   if(a) a.textContent = itemsLoaded ? items.length : '';
   if(b) b.textContent = wishesLoaded ? wishes.filter(w=>!w.bought).length : '';
@@ -6471,12 +6557,14 @@ function ensurePlacesMap(){
   // outside Claude the map can be drawn live (smooth at every zoom); otherwise, or if that can't start, the picture map
   plMap = (HOST && HOST.createMap && HOST.createMap(mapEl)) || createMap(mapEl);
   plMap.onClick = ll=>{
+    if(rt.on){ if(rt.setStart){ rt.start = {lat: ll[0], lng: ll[1]}; rt.startSrc = 'map'; rt.setStart = false; rt.locErr = ''; renderPlaces(); planSoon(); } return; }
     if(plPick){ pickedSpot(ll[0], ll[1]); return; }
     selectPlace(null);
   };
   plMap.onPoiClick = poi=>tappedMapPlace(poi);
   plMap.onMove = ()=>checkVisiblePlacesSoon();
   plMap.onMarkerClick = id=>{
+    if(rt.on){ routePinTapped(id); return; }
     if(id==='__poi') return;
     if(plPick && plPick.mode==='move') return;
     if(plPick && id==='__temp'){ if(plPick.results && plPick.previewI != null) pickSearchResult(plPick.previewI); return; }   // tap the shown match to save it
@@ -6669,6 +6757,7 @@ function renderPlaces(){
   count.textContent = places.length ? `${places.length} ${places.length===1?'place':'places'}` : '';
   if(!plMap) return;
   const shown = places.filter(placeShown);
+  if(rt.on){ plMap.setMarkers(routeMarkers()); renderRoute(); return; }
   // pins
   plMap.setMarkers(shown.filter(p=>validLatLng(p.lat, p.lng)).map(p=>({
     id:p.id, lat:p.lat, lng:p.lng, label:p.name || 'Place',
@@ -6960,6 +7049,254 @@ async function removeInbox(it){
     offerUndo('Removed from your Inbox.', async ()=>{ await db.collection('inbox').doc(it.id).set(copy); });
   }catch(e){ toast("Couldn't remove it. Try again."); }
 }
+
+// ================= Route planner: the quickest way past several shops =================
+// Start where you are, visit every stop, finish at the last one. Walking times come from a free OpenStreetMap
+// route service; for public transport the stops are put in order by distance and each step opens Google Maps.
+function saveRt(){ try{ localStorage.setItem(RT_KEY, JSON.stringify({stops: rt.stops, mode: rt.mode})); }catch(e){} updateNavCounts(); }
+function setRouteMode(on){
+  rt.on = !!on;
+  document.getElementById('placesView').classList.toggle('route', rt.on);
+  document.getElementById('placesView').classList.toggle('rt-mini', rt.on && rt.mini);
+  if(rt.on){
+    plSel = null; plPoi = null; plPick = null; closeDetail && closeDetail();
+    if(!rt.start && !rt.locating) locateMe();
+    renderPlaces(); planSoon(true);
+  }else{
+    if(plMap && plMap.setRoute) plMap.setRoute(null);
+    renderPlaces();
+  }
+}
+function locateMe(){
+  if(!navigator.geolocation){ rt.locErr = 'This browser can’t tell where you are. Choose your start on the map.'; renderRoute(); return; }
+  rt.locating = true; rt.locErr = ''; renderRoute();
+  navigator.geolocation.getCurrentPosition(pos=>{
+    rt.locating = false; rt.start = {lat: pos.coords.latitude, lng: pos.coords.longitude}; rt.startSrc = 'gps'; rt.locErr = '';
+    renderPlaces(); planSoon(true);
+  }, e=>{
+    rt.locating = false;
+    rt.locErr = e && e.code===1 ? 'Location is turned off for this app. Allow it in your browser, or choose your start on the map.' : 'Couldn’t find where you are. Try again, or choose your start on the map.';
+    renderRoute();
+  }, {enableHighAccuracy: true, timeout: 12000, maximumAge: 60000});
+}
+const sameSpot = (a, b)=>Math.abs(a.lat - b.lat) < 0.00002 && Math.abs(a.lng - b.lng) < 0.00002;
+function addStop(st){
+  if(!st || !validLatLng(st.lat, st.lng)) return;
+  const dup = rt.stops.find(x=>(st.placeId && x.placeId===st.placeId) || sameSpot(x, st));
+  if(dup){ toast(`“${dup.name}” is already on your route.`); return; }
+  if(rt.stops.length >= 12){ toast('A route can have up to 12 stops.'); return; }
+  rt.stops.push({k: st.placeId || ('s' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)), placeId: st.placeId || '', name: st.name || 'Stop', lat: +st.lat, lng: +st.lng, emoji: st.emoji || '📍'});
+  rt.results = null; rt.q = ''; saveRt(); renderPlaces(); planSoon(true);
+  toast(`Added “${st.name || 'stop'}” to your route.`);
+}
+function removeStop(k){
+  const i = rt.stops.findIndex(x=>x.k===k); if(i < 0) return;
+  const [gone] = rt.stops.splice(i, 1); saveRt(); renderPlaces(); planSoon(true);
+  offerUndo(`Took “${gone.name}” off your route.`, async ()=>{ rt.stops.splice(Math.min(i, rt.stops.length), 0, gone); saveRt(); renderPlaces(); planSoon(true); });
+}
+function routePinTapped(id){
+  if(id==='__start' || id==='__poi' || id==='__temp') return;
+  if(id.startsWith('__stop_')){ removeStop(id.slice(7)); return; }
+  const p = places.find(x=>x.id===id); if(!p) return;
+  const on = rt.stops.find(x=>x.placeId===p.id);
+  if(on) removeStop(on.k); else addStop({placeId: p.id, name: p.name || 'Place', lat: p.lat, lng: p.lng, emoji: placeEmoji(p)});
+}
+function stopNumber(k){
+  if(rt.res && rt.res.key===routeKey()){ const i = rt.res.order.findIndex(j=>rt.stops[j - 1] && rt.stops[j - 1].k===k); if(i >= 0) return i + 1; }
+  return rt.stops.findIndex(x=>x.k===k) + 1;
+}
+function routeMarkers(){
+  const out = [];
+  places.filter(p=>validLatLng(p.lat, p.lng)).forEach(p=>{
+    const st = rt.stops.find(x=>x.placeId===p.id);
+    out.push(st ? {id: p.id, lat: p.lat, lng: p.lng, label: `Stop ${stopNumber(st.k)}: ${p.name || ''}`, cls: 'stop', pc: 'var(--accent)',
+                   html: `<span class="pm-dot"><span class="pm-emo">${stopNumber(st.k)}</span></span><span class="pm-name">${esc(p.name || '')}</span>`}
+              : {id: p.id, lat: p.lat, lng: p.lng, label: `${p.name || 'Place'} (tap to add to your route)`, cls: 'dim', pc: `var(--nc-${placeColor(p)})`,
+                 html: `<span class="pm-dot"><span class="pm-emo">${esc(placeEmoji(p))}</span></span>`});
+  });
+  rt.stops.filter(s=>!s.placeId || !places.some(p=>p.id===s.placeId)).forEach(s=>out.push({id: '__stop_' + s.k, lat: s.lat, lng: s.lng, label: `Stop ${stopNumber(s.k)}: ${s.name}`, cls: 'stop', pc: 'var(--accent)',
+    html: `<span class="pm-dot"><span class="pm-emo">${stopNumber(s.k)}</span></span><span class="pm-name">${esc(s.name)}</span>`}));
+  if(rt.start) out.push({id: '__start', lat: rt.start.lat, lng: rt.start.lng, label: 'Start', cls: 'me', pc: '#2f6fdb', html: '<span class="pm-dot"><span class="pm-emo"></span></span>'});
+  return out;
+}
+// ---- distances: walking routes from OpenStreetMap (or straight lines when that can't be reached) ----
+const OSRM_FOOT = 'https://routing.openstreetmap.de/routed-foot';
+const WALK_KMH = 4.8;
+async function fetchJSON(url, ms){
+  const c = new AbortController(), t = setTimeout(()=>c.abort(), ms);
+  try{ const r = await fetch(url, {signal: c.signal}); if(!r.ok) throw new Error('http ' + r.status); return await r.json(); }
+  finally{ clearTimeout(t); }
+}
+async function walkMatrix(pts){
+  const j = await fetchJSON(`${OSRM_FOOT}/table/v1/driving/${pts.map(p=>`${(+p.lng).toFixed(6)},${(+p.lat).toFixed(6)}`).join(';')}?annotations=duration,distance`, 15000);
+  if(!j || j.code!=='Ok' || !j.durations) throw new Error('no table');
+  const st = straightMatrix(pts);
+  return {dur: j.durations.map((r, i)=>r.map((v, k)=>v==null ? st.dur[i][k] : v)), dist: (j.distances || st.dist).map((r, i)=>r.map((v, k)=>v==null ? st.dist[i][k] : v))};
+}
+function straightMatrix(pts){
+  const dist = pts.map(a=>pts.map(b=>distKm(a.lat, a.lng, b.lat, b.lng) * 1000 * 1.3));   // streets aren't straight: about 30 % longer
+  return {dist, dur: dist.map(r=>r.map(d=>d / (WALK_KMH / 3.6)))};
+}
+// the best order: try every order for up to 8 stops; for more, start with the nearest each time and keep improving
+function bestOrder(c){
+  const n = c.length - 1; if(n <= 0) return [];
+  const idx = Array.from({length: n}, (_, i)=>i + 1);
+  const len = o=>o.reduce((s, j, i)=>s + c[i ? o[i - 1] : 0][j], 0);
+  if(n <= 8){
+    let best = null, bl = Infinity;
+    const go = (path, left, sofar)=>{
+      if(sofar >= bl) return;
+      if(!left.length){ bl = sofar; best = path.slice(); return; }
+      const from = path.length ? path[path.length - 1] : 0;
+      for(let i = 0; i < left.length; i++){ const j = left[i]; path.push(j); go(path, left.slice(0, i).concat(left.slice(i + 1)), sofar + c[from][j]); path.pop(); }
+    };
+    go([], idx, 0);
+    return best;
+  }
+  const o = [], left = new Set(idx); let at = 0;
+  while(left.size){ let nx = null, nd = Infinity; left.forEach(j=>{ if(c[at][j] < nd){ nd = c[at][j]; nx = j; } }); o.push(nx); left.delete(nx); at = nx; }
+  for(let better = true; better;){
+    better = false;
+    for(let a = 0; a < o.length - 1; a++) for(let b = a + 1; b < o.length; b++){
+      const t = o.slice(0, a).concat(o.slice(a, b + 1).reverse(), o.slice(b + 1));
+      if(len(t) + 1e-6 < len(o)){ o.splice(0, o.length, ...t); better = true; }
+    }
+  }
+  return o;
+}
+let planTimer = null, planSeq = 0;
+function planSoon(now){ clearTimeout(planTimer); planTimer = setTimeout(planRoute, now ? 30 : 300); }
+async function planRoute(){
+  const seq = ++planSeq;
+  if(!rt.on) return;
+  if(!rt.start || !rt.stops.length){ rt.res = null; rt.busy = false; drawRoute(); renderPlaces(); return; }
+  rt.busy = true; rt.err = ''; renderRoute();
+  const key = routeKey(), pts = [rt.start, ...rt.stops];      // (the stops as they are now: if they change meanwhile, this result is thrown away)
+  let M = null, est = false;
+  try{ M = await walkMatrix(pts); }catch(e){ M = null; }
+  if(seq !== planSeq || !rt.on) return;
+  if(!M){ M = straightMatrix(pts); est = true; }
+  const order = bestOrder(rt.mode==='walk' ? M.dur : M.dist);
+  const legs = order.map((j, i)=>{ const a = i ? order[i - 1] : 0; return {from: a, to: j, dur: M.dur[a][j], dist: M.dist[a][j]}; });
+  let geom = null;
+  if(rt.mode==='walk' && !est){
+    try{
+      const way = [0, ...order].map(j=>pts[j]);
+      const g = await fetchJSON(`${OSRM_FOOT}/route/v1/driving/${way.map(p=>`${(+p.lng).toFixed(6)},${(+p.lat).toFixed(6)}`).join(';')}?overview=full&geometries=geojson&steps=false`, 15000);
+      if(seq !== planSeq || !rt.on) return;
+      const r = g && g.routes && g.routes[0];
+      if(r){ geom = r.geometry && r.geometry.coordinates; (r.legs || []).forEach((l, i)=>{ if(legs[i]){ legs[i].dur = l.duration; legs[i].dist = l.distance; } }); }
+    }catch(e){}
+  }
+  if(key !== routeKey()) return;
+  rt.res = {order, legs, est, geom, key, total: {dur: legs.reduce((s, l)=>s + l.dur, 0), dist: legs.reduce((s, l)=>s + l.dist, 0)}};
+  rt.busy = false;
+  drawRoute(); renderPlaces(); fitRoute();
+}
+const routeKey = ()=>JSON.stringify([rt.mode, rt.start && [rt.start.lat.toFixed(5), rt.start.lng.toFixed(5)], rt.stops.map(s=>s.k)]);
+function drawRoute(){
+  if(!plMap || !plMap.setRoute) return;
+  if(!rt.on || !rt.res || !rt.start || rt.res.key !== routeKey()){ plMap.setRoute(null); return; }
+  if(rt.res.geom && rt.res.geom.length > 1) plMap.setRoute(rt.res.geom, {dashed: false});
+  else plMap.setRoute([rt.start, ...rt.res.order.map(j=>rt.stops[j - 1])].map(p=>[p.lng, p.lat]), {dashed: true});   // public transport: straight dashed lines between the stops
+}
+function fitRoute(){
+  if(!plMap || !rt.start) return;
+  const pts = [[rt.start.lat, rt.start.lng], ...rt.stops.map(s=>[s.lat, s.lng])];
+  const sheet = !isWide() && document.querySelector('.places.route .pl-side');
+  const below = sheet ? sheet.getBoundingClientRect().height : 0;
+  if(plMap.gl) plMap.fit(pts, {top: 60, bottom: Math.max(40, below + 30), left: 40, right: 60});
+  else plMap.fit(pts, Math.max(60, below ? below / 2 + 30 : 60));
+}
+const fmtDur = s=>{ const m = Math.max(1, Math.round(s / 60)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`; };
+const fmtDist = m=>m < 950 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(m < 9500 ? 1 : 0).replace('.', ',')} km`;
+const gmDir = (a, b, mode)=>`https://www.google.com/maps/dir/?api=1&origin=${a.lat.toFixed(6)},${a.lng.toFixed(6)}&destination=${b.lat.toFixed(6)},${b.lng.toFixed(6)}&travelmode=${mode==='walk' ? 'walking' : 'transit'}`;
+// ---- searching for a stop: your own places first, then anything on the map ----
+let rtSearchCtl = null;
+async function routeSearch(text){
+  text = String(text || '').trim(); rt.q = text;
+  if(!text){ rt.results = null; renderRoute(); return; }
+  const mine = places.filter(p=>validLatLng(p.lat, p.lng) && norm(p.name || '').includes(norm(text))).slice(0, 6)
+    .map(p=>({placeId: p.id, name: p.name || 'Place', lat: p.lat, lng: p.lng, emoji: placeEmoji(p), sub: p.address || 'Your place'}));
+  rt.results = {mine, found: null}; rt.searching = true; renderRoute();
+  if(rtSearchCtl) rtSearchCtl.abort();
+  const ctl = rtSearchCtl = new AbortController();
+  let found = [];
+  try{
+    const [clat, clng] = rt.start ? [rt.start.lat, rt.start.lng] : plMap.center();
+    if(HOST && HOST.searchPlaces) found = await HOST.searchPlaces(text, clat, clng, ctl.signal);
+    else{
+      const mcp = await getMcp();
+      if(mcp){
+        const r = await mcp.callTool(TOMTOM, 'tomtom-fuzzy-search', {query: text, limit: 8, position: [+clng.toFixed(5), +clat.toFixed(5)], response_detail: 'compact', show_ui: false}, {signal: ctl.signal});
+        const feats = (r && r.payload && r.payload.features) || [];
+        found = feats.map(f=>{ const pr = f.properties || {}, a = pr.address || {}, poi = pr.poi || {}, g = f.geometry && f.geometry.coordinates;
+          return g ? {name: poi.name || a.freeformAddress || text, address: a.freeformAddress || '', lat: +g[1], lng: +g[0], categories: poi.categories} : null; }).filter(Boolean);
+      }
+    }
+  }catch(e){ if(ctl.signal.aborted) return; }
+  if(ctl !== rtSearchCtl) return;
+  rt.searching = false;
+  rt.results = {mine, found: found.filter(r=>validLatLng(r.lat, r.lng) && !mine.some(m=>sameSpot(m, r))).slice(0, 8)
+    .map(r=>({name: r.name, lat: r.lat, lng: r.lng, emoji: r.emoji || (r.categories && r.categories.length ? emojiForCategories(r.categories) : '📍'), sub: r.address || ''}))};
+  renderRoute();
+}
+function renderRoute(){
+  const box = document.getElementById('rtPanel'); if(!box || !rt.on) return;
+  document.getElementById('placesView').classList.toggle('rt-mini', rt.mini);
+  const count = document.getElementById('count'); if(count) count.textContent = rt.stops.length ? `${rt.stops.length} ${rt.stops.length===1 ? 'stop' : 'stops'}` : '';
+  const typing = document.activeElement && document.activeElement.id==='rtQ', caret = typing ? document.activeElement.selectionStart : 0;
+  const res = rt.res && rt.res.key===routeKey() ? rt.res : null;
+  const ordered = res ? res.order.map(j=>rt.stops[j - 1]) : rt.stops;
+  const prevOf = i=>i ? ordered[i - 1] : rt.start;
+  const startLine = rt.locating ? '<span class="busy-spin" aria-hidden="true"></span> Finding where you are…'
+    : rt.start ? (rt.startSrc==='gps' ? '📍 Start: <b>where you are now</b>' : '📍 Start: <b>the spot you chose on the map</b>')
+    : '📍 Start: <b>not set yet</b>';
+  const R = rt.results;
+  const resRow = (r, kind, i)=>`<button type="button" data-add="${kind}:${i}"><span>${esc(r.emoji || '📍')}</span><span><b>${esc(r.name)}</b>${r.sub ? `<small>${esc(r.sub)}</small>` : ''}</span></button>`;
+  box.innerHTML = `
+    <div class="rt-head"><b>Plan a route</b><button type="button" class="rt-min" id="rtMin" aria-expanded="${rt.mini ? 'false' : 'true'}">${rt.mini ? 'Show ▴' : 'Smaller ▾'}</button></div>
+    <div class="rt-modes" role="radiogroup" aria-label="How you travel">
+      <button type="button" role="radio" data-m="walk" class="${rt.mode==='walk' ? 'on' : ''}" aria-checked="${rt.mode==='walk'}">🚶 Walking</button>
+      <button type="button" role="radio" data-m="transit" class="${rt.mode==='transit' ? 'on' : ''}" aria-checked="${rt.mode==='transit'}">🚇 Public transport</button>
+    </div>
+    <div class="rt-start"><span class="rt-s">${startLine}</span>
+      <button type="button" class="rt-mini-btn" id="rtLocate">Use where I am</button>
+      <button type="button" class="rt-mini-btn${rt.setStart ? ' on' : ''}" id="rtPickStart">${rt.setStart ? 'Now tap the map…' : 'Choose on the map'}</button>
+      ${rt.locErr ? `<small class="err">${esc(rt.locErr)}</small>` : ''}</div>
+    <form class="rt-add" id="rtAdd"><input id="rtQ" type="search" enterkeyhint="search" autocomplete="off" placeholder="Add a shop or place…" aria-label="Add a shop or place" value="${esc(rt.q)}"><button type="submit" class="pc-btn">${rt.searching ? '…' : 'Find'}</button></form>
+    ${R ? `<div class="rt-res">${R.mine.length ? `<div class="rt-sec">Your places</div>${R.mine.map((r, i)=>resRow(r, 'm', i)).join('')}` : ''}
+      ${R.found ? (R.found.length ? `<div class="rt-sec">On the map</div>${R.found.map((r, i)=>resRow(r, 'f', i)).join('')}` : (R.mine.length ? '' : '<div class="rt-empty">Nothing found. Try another name, or tap the place on the map.</div>')) : '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Searching…</div>'}</div>` : ''}
+    <div class="rt-hint">Or tap any of your pins, or any shop on the map, to add it. Tap a numbered pin to take it off.</div>
+    ${rt.stops.length ? `<ol class="rt-stops">${ordered.map((s, i)=>{ const leg = res && res.legs[i];
+        return `<li><span class="rt-n">${i + 1}</span><span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b><small>${leg ? (rt.mode==='walk' ? `${fmtDur(leg.dur)} walk · ${fmtDist(leg.dist)}${res.est ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away`) : rt.busy ? 'working out the order…' : ''}</small></span>
+          ${rt.start && res ? `<a class="rt-dir" href="${esc(gmDir(prevOf(i), s, rt.mode))}" target="_blank" rel="noopener noreferrer" title="${rt.mode==='walk' ? 'Walking' : 'Public transport'} directions in Google Maps" aria-label="Directions to ${esc(s.name)}">${GMAPS_SVG}${rt.mode==='walk' ? '' : 'Go'}</a>` : ''}
+          <button type="button" class="rt-x" data-rm="${esc(s.k)}" aria-label="Take ${esc(s.name)} off the route" title="Take it off">×</button></li>`; }).join('')}</ol>`
+      : '<div class="rt-empty">No stops yet. Add the shops you want to visit, and I’ll work out the quickest order.</div>'}
+    ${res && rt.stops.length ? (rt.mode==='walk'
+        ? `<div class="rt-sum">≈ <b>${fmtDur(res.total.dur)}</b> walking · ${fmtDist(res.total.dist)}${rt.stops.length > 1 ? ', in the quickest order' : ''}.${res.est ? '<small>The walking route service couldn’t be reached, so these are estimates from straight-line distances.</small>' : ''}</div>`
+        : `<div class="rt-sum">Stops in the shortest order (${fmtDist(res.total.dist)} in all).<small>Tram, metro and bus times aren’t available here. Tap <b>Go</b> at each stop for public transport directions in Google Maps.</small></div>`)
+      : rt.busy ? '<div class="rt-sum"><span class="busy-spin" aria-hidden="true"></span>Working out the quickest order…</div>'
+      : rt.stops.length && !rt.start ? '<div class="rt-sum">Set where you start (above), and I’ll work out the order.</div>' : ''}
+    ${rt.stops.length ? `<div class="rt-acts">${res && rt.mode==='walk' && rt.start ? `<a class="pc-btn pc-main" target="_blank" rel="noopener noreferrer" href="${esc(`https://www.google.com/maps/dir/?api=1&origin=${rt.start.lat.toFixed(6)},${rt.start.lng.toFixed(6)}&destination=${ordered[ordered.length - 1].lat.toFixed(6)},${ordered[ordered.length - 1].lng.toFixed(6)}${ordered.length > 1 ? `&waypoints=${ordered.slice(0, -1).map(s=>`${s.lat.toFixed(6)},${s.lng.toFixed(6)}`).join('|')}` : ''}&travelmode=walking`)}">${GMAPS_SVG}Open the whole route</a>` : ''}
+      <button type="button" class="pc-btn" id="rtClear">Clear route</button></div>` : ''}`;
+  // wiring
+  box.querySelector('#rtMin').onclick = ()=>{ rt.mini = !rt.mini; renderRoute(); };
+  box.querySelectorAll('.rt-modes [data-m]').forEach(b=>b.onclick = ()=>{ if(rt.mode===b.dataset.m) return; rt.mode = b.dataset.m; rt.res = null; saveRt(); renderPlaces(); planSoon(true); });
+  box.querySelector('#rtLocate').onclick = ()=>{ rt.setStart = false; locateMe(); };
+  box.querySelector('#rtPickStart').onclick = ()=>{ rt.setStart = !rt.setStart; if(rt.setStart && !isWide()) rt.mini = true; renderRoute(); };
+  const q = box.querySelector('#rtQ');
+  box.querySelector('#rtAdd').onsubmit = e=>{ e.preventDefault(); routeSearch(q.value); };
+  q.oninput = debounce(()=>{ if(q.value.trim().length >= 2) routeSearch(q.value); else if(!q.value.trim()){ rt.q = ''; rt.results = null; renderRoute(); } }, 450);
+  if(typing){ q.focus(); try{ q.setSelectionRange(caret, caret); }catch(e){} }
+  box.querySelectorAll('[data-add]').forEach(b=>b.onclick = ()=>{ const [kind, i] = b.dataset.add.split(':'); const r = (kind==='m' ? R.mine : R.found)[+i]; if(r) addStop(r); });
+  box.querySelectorAll('[data-rm]').forEach(b=>b.onclick = ()=>removeStop(b.dataset.rm));
+  const clr = box.querySelector('#rtClear'); if(clr) clr.onclick = ()=>{
+    const before = rt.stops.slice(); rt.stops = []; rt.res = null; saveRt(); drawRoute(); renderPlaces();
+    offerUndo('Cleared your route.', async ()=>{ rt.stops = before; saveRt(); renderPlaces(); planSoon(true); });
+  };
+}
+
 // ================= place details from OpenStreetMap (opening hours, address, phone…) =================
 // Only outside Claude (the lookup needs the internet); inside Claude nothing here runs.
 const OH_DAYS = ['Mo','Tu','We','Th','Fr','Sa','Su'], OH_NAMES = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
@@ -7194,6 +7531,7 @@ async function ignoreClosed(id){
 // tapping a café, museum, station… drawn on the map
 function tappedMapPlace(poi){
   const emoji = emojiForCategories(poi.categories);
+  if(rt.on){ addStop({name: poi.name, lat: poi.lat, lng: poi.lng, emoji}); return; }   // planning a route: any shop on the map can be a stop
   if(plPick){                                             // adding or moving a pin: use that exact spot (and its name)
     if(plPick.mode==='move'){ pickedSpot(poi.lat, poi.lng); return; }
     plPick.temp = [poi.lat, poi.lng]; renderPlaces();
@@ -7492,7 +7830,7 @@ function setupPlaces(){
   document.getElementById('p_status').onclick = e=>{ const b = e.target.closest('button'); if(!b) return; plFormStatus = b.dataset.s; paintPlaceForm(); };
   document.getElementById('p_name').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); savePlace(); } });
   document.addEventListener('keydown', e=>{
-    if(e.key!=='Escape' || currentMod!=='places') return;
+    if(e.key!=='Escape' || (currentMod!=='places' && currentMod!=='route')) return;
     if(document.getElementById('placeOverlay').classList.contains('show')){ closePlaceForm(); return; }
     if(plPick){ cancelPick(); return; }
   });
