@@ -1,0 +1,24 @@
+name: diag
+on:
+  push:
+    branches: [diag]
+jobs:
+  look:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          cat > d.mjs <<'JS'
+          const L=(...a)=>console.log('::notice::'+a.map(x=>String(x)).join(' ').replace(/%/g,'%25').replace(/\n/g,'%0A'));
+          const pts='14.4378,50.0755;14.4213,50.0870;14.4065,50.0865;14.4180,50.0810;14.4300,50.0830';  // Prague: start + 4 stops (lng,lat)
+          for (const [name,u] of [
+            ['table foot', 'https://routing.openstreetmap.de/routed-foot/table/v1/driving/'+pts+'?annotations=duration,distance'],
+            ['route foot', 'https://routing.openstreetmap.de/routed-foot/route/v1/driving/'+pts+'?overview=full&geometries=geojson&steps=false'],
+            ['trip foot', 'https://routing.openstreetmap.de/routed-foot/trip/v1/driving/'+pts+'?source=first&destination=any&roundtrip=false&geometries=geojson&overview=simplified'],
+          ]) {
+            const t0=Date.now();
+            try{ const r=await fetch(u,{headers:{Origin:'https://ph4m1k.github.io'}}); const t=await r.text(); let j=null; try{j=JSON.parse(t)}catch(e){}
+              L(`${name}: ${r.status} ${Date.now()-t0}ms CORS=${r.headers.get('access-control-allow-origin')} code=${j&&j.code} ` + (j && j.durations ? 'durations row0='+JSON.stringify(j.durations[0]) + ' dist row0='+JSON.stringify(j.distances&&j.distances[0]) : j && j.routes ? 'dur='+j.routes[0].duration+' dist='+j.routes[0].distance+' pts='+j.routes[0].geometry.coordinates.length : j && j.trips ? 'order='+JSON.stringify(j.waypoints.map(w=>w.waypoint_index))+' dur='+j.trips[0].duration : t.slice(0,200)));
+            }catch(e){ L(name+' ERR '+e.message); }
+          }
+          JS
+          node d.mjs
