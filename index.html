@@ -1574,7 +1574,8 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .places.route .pl-side > :not(.rt-panel){display:none !important;}
   .rt-panel{display:none;flex-direction:column;gap:10px;min-height:0;overflow-y:auto;font-family:-apple-system,sans-serif;font-size:0.86rem;padding-bottom:6px;}
   .places.route .rt-panel{display:flex;}
-  .rt-panel > *{flex-shrink:0;}                 /* scroll the panel instead of squeezing its parts */
+  .rt-panel > *{flex-shrink:0;}
+  .nav-extmark{font-size:0.72em;opacity:.6;}                 /* scroll the panel instead of squeezing its parts */
   .places.route .pl-listbtn{display:none !important;}
   .rt-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}
   .rt-head b{font-size:0.95rem;}
@@ -1972,6 +1973,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   <button type="button" class="nav-item" data-mod="notes" onclick="switchModule('notes')" title="Notes"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3.5 3.5v11.5H5z"/><path d="M12 2.5V6h3.5M7.5 10h5.5M7.5 13h5.5"/></svg><span class="nav-label">Notes</span><span class="nav-n" id="navN_notes"></span></button>
   <button type="button" class="nav-item" data-mod="places" onclick="switchModule('places')" title="Places"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17.5s5.5-5.2 5.5-9.3a5.5 5.5 0 00-11 0c0 4.1 5.5 9.3 5.5 9.3z"/><circle cx="10" cy="8.2" r="2"/></svg><span class="nav-label">Places</span><span class="nav-n" id="navN_places"></span></button>
   <button type="button" class="nav-item" data-mod="route" onclick="switchModule('route')" title="Route planner"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="15" r="2"/><circle cx="15" cy="5" r="2"/><path d="M7 15h5.5a2.5 2.5 0 000-5h-5a2.5 2.5 0 010-5H13"/></svg><span class="nav-label">Route</span><span class="nav-n" id="navN_route"></span></button>
+  <button type="button" class="nav-item nav-ext" data-mod="globe" onclick="openGlobe()" title="God's Eye View (opens in a new tab; runs on your computer)"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M2.5 10h15M10 2.5c2.2 2.3 3.2 4.8 3.2 7.5s-1 5.2-3.2 7.5c-2.2-2.3-3.2-4.8-3.2-7.5s1-5.2 3.2-7.5z"/></svg><span class="nav-label">Globe <span class="nav-extmark" aria-hidden="true">↗</span></span><span class="nav-n"></span></button>
   <div class="side-hint" id="sideHint">Hold a module and drag it to reorder</div>
 </nav>
 <div class="side-backdrop" id="sideBackdrop" onclick="toggleSide(false)"></div>
@@ -3084,6 +3086,15 @@ function wishCard(w){
     </div>`;
 }
 
+// God's Eye View: a separate app that runs on your computer; this just opens it
+const GLOBE_URL = 'http://localhost:4173/';
+function openGlobe(){
+  const phone = window.matchMedia('(pointer: coarse)').matches && !window.matchMedia('(min-width: 860px)').matches;
+  if(phone){ toast("God's Eye View runs on your computer. Open it there (start it first, then tap Globe)."); return; }
+  const w = window.open(GLOBE_URL, '_blank');
+  if(w) try{ w.opener = null; }catch(e){}
+  toast(!w ? "Couldn't open a new tab. Allow pop-ups for this page, or open " + GLOBE_URL + " yourself." : "Opening God's Eye View… If the tab says it can't connect, start the app on your computer first.");
+}
 function updateNavCounts(){
   const g = document.getElementById('navN_bucket'); if(g) g.textContent = goalsLoaded ? goals.filter(x=>!x.done).length : '';
   const n = document.getElementById('navN_notes'); if(n) n.textContent = notesLoaded ? notes.length : '';
