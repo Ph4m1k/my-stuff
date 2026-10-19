@@ -1605,6 +1605,23 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-nm b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .rt-nm small{color:var(--muted);font-size:0.74rem;}
   .rt-dir{flex:0 0 auto;display:inline-flex;align-items:center;gap:4px;padding:5px 8px;border:1px solid var(--line);border-radius:4px;color:var(--ink);text-decoration:none;font-size:0.74rem;}
+  .rt-stops li.has-tr{align-items:flex-start;}
+  .rt-stops li.has-tr .rt-n{margin-top:2px;}
+  .rt-tr{display:flex;flex-direction:column;gap:3px;margin-top:3px;font-size:0.76rem;}
+  .rt-chips{display:flex;flex-wrap:wrap;align-items:center;gap:3px;}
+  .rt-line{display:inline-flex;align-items:center;gap:3px;padding:1px 6px;border-radius:4px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-weight:600;font-size:0.74rem;white-space:nowrap;}
+  .rt-arr{color:var(--muted);}
+  .rt-when{color:var(--muted);}
+  .rt-steps summary{cursor:pointer;color:var(--accent);font-size:0.74rem;}
+  .rt-steps ol{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;}
+  .rt-steps li{display:block;padding:0;border:none;background:none;line-height:1.45;}
+  .rt-dirn{color:var(--muted);}
+  .rt-nm .rt-steps b{display:inline;white-space:normal;overflow:visible;font-weight:600;}
+  .rt-steps .rt-line{vertical-align:1px;margin-right:2px;}
+  .rt-done{align-self:flex-start;margin-top:6px;padding:5px 10px;border:1px solid var(--accent);border-radius:999px;background:var(--accent);color:var(--paper);font:inherit;font-size:0.76rem;cursor:pointer;}
+  .rt-nm{display:flex;flex-direction:column;}
+  .rt-credit{display:block;margin-top:4px;}
+  .rt-credit a{color:inherit;}
   .rt-x{flex:0 0 auto;border:none;background:none;color:var(--muted);font-size:1.1rem;cursor:pointer;padding:0 4px;}
   .rt-sum{padding:8px 10px;border-radius:6px;background:color-mix(in srgb, var(--accent) 10%, transparent);font-size:0.84rem;}
   .rt-sum small{display:block;color:var(--muted);font-size:0.74rem;margin-top:3px;}
@@ -7083,8 +7100,8 @@ function setRouteMode(on){
     renderPlaces();
   }
 }
-function locateMe(){
-  if(!navigator.geolocation){ rt.locErr = 'This browser can’t tell where you are. Choose your start on the map.'; renderRoute(); return; }
+function locateMe(fresh, onFail){
+  if(!navigator.geolocation){ rt.locErr = 'This browser can’t tell where you are. Choose your start on the map.'; renderRoute(); if(onFail) onFail(); return; }
   rt.locating = true; rt.locErr = ''; renderRoute();
   navigator.geolocation.getCurrentPosition(pos=>{
     rt.locating = false; rt.start = {lat: pos.coords.latitude, lng: pos.coords.longitude}; rt.startSrc = 'gps'; rt.locErr = '';
@@ -7092,8 +7109,8 @@ function locateMe(){
   }, e=>{
     rt.locating = false;
     rt.locErr = e && e.code===1 ? 'Location is turned off for this app. Allow it in your browser, or choose your start on the map.' : 'Couldn’t find where you are. Try again, or choose your start on the map.';
-    renderRoute();
-  }, {enableHighAccuracy: true, timeout: 12000, maximumAge: 60000});
+    if(onFail) onFail(); else renderRoute();
+  }, {enableHighAccuracy: true, timeout: 12000, maximumAge: fresh ? 0 : 60000});
 }
 const sameSpot = (a, b)=>Math.abs(a.lat - b.lat) < 0.00002 && Math.abs(a.lng - b.lng) < 0.00002;
 function addStop(st){
@@ -7109,6 +7126,23 @@ function removeStop(k){
   const i = rt.stops.findIndex(x=>x.k===k); if(i < 0) return;
   const [gone] = rt.stops.splice(i, 1); saveRt(); stopsChanged();
   offerUndo(`Took “${gone.name}” off your route.`, async ()=>{ rt.stops.splice(Math.min(i, rt.stops.length), 0, gone); saveRt(); stopsChanged(); });
+}
+// finished at the next stop: tick it off and work out the way on from where you are now
+function doneHere(k){
+  const i = rt.stops.findIndex(x=>x.k===k); if(i < 0) return;
+  const before = {stops: rt.stops.slice(), start: rt.start, startSrc: rt.startSrc, startName: rt.startName};
+  const [gone] = rt.stops.splice(i, 1); saveRt();
+  rt.start = {lat: gone.lat, lng: gone.lng}; rt.startSrc = 'stop'; rt.startName = gone.name;   // until the phone says where you are
+  rt.res = null; planSeq++; clearTimeout(planTimer);
+  if(rt.stops.length){
+    rt.asked = true; rt.busy = true;
+    locateMe(true, ()=>{ rt.locErr = ''; planSoon(true); });     // no location: carry on from the shop you just left
+  }else{ rt.asked = false; rt.busy = false; }
+  drawRoute(); renderPlaces();
+  offerUndo(rt.stops.length ? `Done at “${gone.name}”. Finding the way to the next stop…` : `Done at “${gone.name}”. That was your last stop!`, async ()=>{
+    rt.stops = before.stops; rt.start = before.start; rt.startSrc = before.startSrc; rt.startName = before.startName; saveRt();
+    rt.asked = true; rt.res = null; planSoon(true);
+  });
 }
 function routePinTapped(id){
   if(id==='__start' || id==='__poi' || id==='__temp') return;
@@ -7137,6 +7171,59 @@ function routeMarkers(){
 }
 // ---- distances: walking routes from OpenStreetMap (or straight lines when that can't be reached) ----
 const OSRM_FOOT = 'https://routing.openstreetmap.de/routed-foot';
+// Public transport connections: Transitous, a free community journey planner (https://transitous.org) built on the
+// timetables transport companies publish (in Prague: PID). Asked only when you press "Plan my route" or "Done here".
+const TRANSITOUS = 'https://api.transitous.org/api/v5/plan';
+const TRANSITOUS_SOURCES = 'https://transitous.org/sources/';
+function decodePolyline(str, precision){
+  const f = Math.pow(10, precision || 6), out = []; let i = 0, lat = 0, lng = 0;
+  while(i < str.length){
+    for(const k of [0, 1]){
+      let b, sh = 0, r = 0;
+      do{ b = str.charCodeAt(i++) - 63; r |= (b & 31) << sh; sh += 5; }while(b >= 32 && i < str.length);
+      const d = (r & 1) ? ~(r >> 1) : (r >> 1);
+      if(k===0) lat += d; else lng += d;
+    }
+    out.push([lng / f, lat / f]);
+  }
+  return out;
+}
+// the best connection from a to b leaving at `when` (ms): earliest arrival, a little penalty per change; walking counts too
+async function transitLeg(a, b, when){
+  const u = `${TRANSITOUS}?fromPlace=${(+a.lat).toFixed(6)},${(+a.lng).toFixed(6)}&toPlace=${(+b.lat).toFixed(6)},${(+b.lng).toFixed(6)}&time=${encodeURIComponent(new Date(when).toISOString())}`;
+  const j = await fetchJSON(u, 15000);
+  const all = [...((j && j.itineraries) || []), ...((j && j.direct) || []).map(x=>({...x, transfers: 0}))]
+    .filter(x=>x && x.legs && x.legs.length && Date.parse(x.endTime));
+  if(!all.length) return null;
+  const score = x=>Date.parse(x.endTime) + (x.transfers || 0) * 3 * 60000 + (x.legs.some(l=>l.mode!=='WALK') ? 60000 : 0);
+  all.sort((x, y)=>score(x) - score(y));
+  return all[0];
+}
+const TR_ICON = {WALK:'🚶', TRAM:'🚋', SUBWAY:'🚇', METRO:'🚇', BUS:'🚌', COACH:'🚌', TROLLEYBUS:'🚎', RAIL:'🚆', REGIONAL_RAIL:'🚆', REGIONAL_FAST_RAIL:'🚆', LONG_DISTANCE:'🚆', HIGHSPEED_RAIL:'🚄', NIGHT_RAIL:'🚆', SUBURBAN:'🚆', FERRY:'⛴️', FUNICULAR:'🚞', CABLE_CAR:'🚡', AERIAL_LIFT:'🚡', AIRPLANE:'✈️'};
+const TR_NAME = {TRAM:'Tram', SUBWAY:'Metro', METRO:'Metro', BUS:'Bus', COACH:'Bus', TROLLEYBUS:'Trolleybus', RAIL:'Train', REGIONAL_RAIL:'Train', REGIONAL_FAST_RAIL:'Train', LONG_DISTANCE:'Train', HIGHSPEED_RAIL:'Train', NIGHT_RAIL:'Night train', SUBURBAN:'Train', FERRY:'Ferry', FUNICULAR:'Funicular', CABLE_CAR:'Cable car', AERIAL_LIFT:'Cable car'};
+const fmtClock = t=>{ const d = new Date(t); return isNaN(d) ? '' : d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', hour12: false}); };
+const okColor = c=>/^[0-9a-f]{6}$/i.test(c || '') ? '#' + c : '';
+function trChip(l){
+  const bg = okColor(l.routeColor), fg = okColor(l.routeTextColor) || '#fff';
+  return `<span class="rt-line"${bg ? ` style="background:${bg};color:${fg};border-color:${bg}"` : ''}>${TR_ICON[l.mode] || '🚍'} ${esc(l.displayName || l.routeShortName || TR_NAME[l.mode] || '')}</span>`;
+}
+// one stop's connection: line chips + times, and the steps
+function trLegHtml(it, open){
+  const rides = it.legs.filter(l=>l.mode!=='WALK');
+  const chips = rides.length ? rides.map(trChip).join('<span class="rt-arr">›</span>') : '<span class="rt-line">🚶 Walk</span>';
+  const ch = it.transfers ? ` · ${it.transfers} ${it.transfers===1 ? 'change' : 'changes'}` : '';
+  const steps = it.legs.map((l, i)=>{
+    const last = i===it.legs.length - 1;
+    if(l.mode==='WALK'){
+      if(l.duration < 90 && !(i===0 || last)) return '';           // a short walk inside the station
+      const to = last ? 'the stop' : esc(l.to && l.to.name || '');
+      return `<li>🚶 Walk ${fmtDur(l.duration)} to ${to}</li>`;
+    }
+    return `<li>${trChip(l)} <b>${fmtClock(l.startTime)}</b> from ${esc(l.from && l.from.name || '')}${l.headsign ? ` <span class="rt-dirn">(towards ${esc(l.headsign)})</span>` : ''} → <b>${esc(l.to && l.to.name || '')}</b> ${fmtClock(l.endTime)}</li>`;
+  }).join('');
+  return `<span class="rt-tr"><span class="rt-chips">${chips}</span><span class="rt-when">${fmtClock(it.startTime)} → ${fmtClock(it.endTime)} · ${fmtDur(it.duration)}${ch}</span>
+    <details class="rt-steps"${open ? ' open' : ''}><summary>${open ? 'Steps' : 'Show steps'}</summary><ol>${steps}</ol></details></span>`;
+}
 const WALK_KMH = 4.8;
 async function fetchJSON(url, ms){
   const c = new AbortController(), t = setTimeout(()=>c.abort(), ms);
@@ -7208,8 +7295,29 @@ async function planRoute(){
       if(r){ geom = r.geometry && r.geometry.coordinates; (r.legs || []).forEach((l, i)=>{ if(legs[i]){ legs[i].dur = l.duration; legs[i].dist = l.distance; } }); }
     }catch(e){}
   }
+  let trOk = 0, arrive = 0;
+  if(rt.mode==='transit' && HOST){
+    // each step leaves when the one before arrives; ✓ Done here asks again from where you really are
+    const way = [0, ...order], line = []; let t = Date.now();
+    for(let i = 0; i < order.length; i++){
+      const a = pts[way[i]], b = pts[way[i + 1]];
+      let it = null;
+      try{ it = await transitLeg(a, b, t); }catch(e){}
+      if(seq !== planSeq || !rt.on) return;
+      if(it){
+        legs[i].tr = it; legs[i].dur = it.duration; trOk++;
+        t = Date.parse(it.endTime);
+        it.legs.forEach(l=>{ const g = l.legGeometry && l.legGeometry.points && decodePolyline(l.legGeometry.points, l.legGeometry.precision); if(g && g.length > 1) line.push(...g); });
+      }else{
+        line.push([+a.lng, +a.lat], [+b.lng, +b.lat]);
+        t += legs[i].dist / 1000 / 15 * 3600e3;           // no connection found: a rough guess (~15 km/h)
+      }
+    }
+    if(trOk) geom = line;
+    arrive = t;
+  }
   if(key !== routeKey()) return;
-  rt.res = {order, legs, est, geom, key, total: {dur: legs.reduce((s, l)=>s + l.dur, 0), dist: legs.reduce((s, l)=>s + l.dist, 0)}};
+  rt.res = {order, legs, est, geom, key, trOk, arrive, total: {dur: legs.reduce((s, l)=>s + l.dur, 0), dist: legs.reduce((s, l)=>s + l.dist, 0)}};
   rt.busy = false;
   drawRoute(); renderPlaces(); fitRoute();
 }
@@ -7313,7 +7421,7 @@ function renderRoute(){
   const ordered = res ? res.order.map(j=>rt.stops[j - 1]) : rt.stops;
   const prevOf = i=>i ? ordered[i - 1] : rt.start;
   const startLine = rt.locating ? '<span class="busy-spin" aria-hidden="true"></span> Finding where you are…'
-    : rt.start ? (rt.startSrc==='gps' ? '📍 Start: <b>where you are now</b>' : '📍 Start: <b>the spot you chose on the map</b>')
+    : rt.start ? (rt.startSrc==='gps' ? '📍 Start: <b>where you are now</b>' : rt.startSrc==='stop' ? `📍 Start: <b>${esc(rt.startName || 'your last stop')}</b>` : '📍 Start: <b>the spot you chose on the map</b>')
     : '📍 Start: <b>not set yet</b>';
   const R = rt.results;
   const resRow = (r, kind, i)=>`<button type="button" data-add="${kind}:${i}"><span>${esc(r.emoji || '📍')}</span><span><b>${esc(r.name)}</b>${r.sub ? `<small>${esc(r.sub)}</small>` : ''}</span></button>`;
@@ -7333,13 +7441,16 @@ function renderRoute(){
       ${R.found ? (R.found.length ? `<div class="rt-sec">On the map</div>${R.found.map((r, i)=>resRow(r, 'f', i)).join('')}` : (R.mine.length ? '' : '<div class="rt-empty">Nothing found. Try another name, or tap the place on the map.</div>')) : '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Searching…</div>'}</div>` : ''}
     <div class="rt-hint">Or tap any of your pins, or any shop on the map, to add it. Tap a numbered pin to take it off.</div>
     ${rt.stops.length ? `<ol class="rt-stops">${ordered.map((s, i)=>{ const leg = res && res.legs[i];
-        return `<li><span class="rt-n">${i + 1}</span><span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b><small>${leg ? (rt.mode==='walk' ? `${fmtDur(leg.dur)} walk · ${fmtDist(leg.dist)}${res.est ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away`) : rt.busy ? 'working out the order…' : ''}</small></span>
+        const tr = leg && rt.mode==='transit' && leg.tr;
+        return `<li class="${tr ? 'has-tr' : ''}"><span class="rt-n">${i + 1}</span><span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? trLegHtml(tr, i===0) : `<small>${leg ? (rt.mode==='walk' ? `${fmtDur(leg.dur)} walk · ${fmtDist(leg.dist)}${res.est ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
+          ${i===0 && res && rt.start ? `<button type="button" class="rt-done" data-done="${esc(s.k)}">✓ Done here</button>` : ''}</span>
           ${rt.start && res ? `<a class="rt-dir" href="${esc(gmDir(prevOf(i), s, rt.mode))}" target="_blank" rel="noopener noreferrer" title="${rt.mode==='walk' ? 'Walking' : 'Public transport'} directions in Google Maps" aria-label="Directions to ${esc(s.name)}">${GMAPS_SVG}${rt.mode==='walk' ? '' : 'Go'}</a>` : ''}
           <button type="button" class="rt-x" data-rm="${esc(s.k)}" aria-label="Take ${esc(s.name)} off the route" title="Take it off">×</button></li>`; }).join('')}</ol>`
       : '<div class="rt-empty">No stops yet. Add the shops you want to visit, and I’ll work out the quickest order.</div>'}
     ${res && rt.stops.length ? (rt.mode==='walk'
         ? `<div class="rt-sum">≈ <b>${fmtDur(res.total.dur)}</b> walking · ${fmtDist(res.total.dist)}${rt.stops.length > 1 ? ', in the quickest order' : ''}.${res.est ? '<small>The walking route service couldn’t be reached, so these are estimates from straight-line distances.</small>' : ''}</div>`
-        : `<div class="rt-sum">Stops in the shortest order (${fmtDist(res.total.dist)} in all).<small>Tram, metro and bus times aren’t available here. Tap <b>Go</b> at each stop for public transport directions in Google Maps.</small></div>`)
+        : res.trOk ? `<div class="rt-sum">≈ <b>${fmtDur(Math.max(0, (res.arrive - Date.now()) / 1000))}</b> by public transport · at your last stop around <b>${fmtClock(res.arrive)}</b>.<small>Times for later stops assume you leave as soon as you arrive. When you’re finished at a stop, tap <b>✓ Done here</b> for fresh times from where you are.${res.trOk < res.legs.length ? ' For steps without a connection, tap <b>Go</b> for Google Maps.' : ''}</small><small class="rt-credit">Connections: <a href="https://transitous.org" target="_blank" rel="noopener noreferrer">Transitous</a> · <a href="${TRANSITOUS_SOURCES}" target="_blank" rel="noopener noreferrer">timetable sources</a></small></div>`
+        : `<div class="rt-sum">Stops in the shortest order (${fmtDist(res.total.dist)} in all).<small>${HOST ? 'Couldn’t get tram, metro and bus times right now.' : 'Tram, metro and bus times work in the app version (outside Claude).'} Tap <b>Go</b> at each stop for public transport directions in Google Maps.</small></div>`)
       : rt.busy ? '<div class="rt-sum"><span class="busy-spin" aria-hidden="true"></span>Working out the quickest order…</div>'
       : rt.stops.length && !rt.asked ? `<div class="rt-go"><button type="button" class="pc-btn pc-main" id="rtPlan"${rt.start ? '' : ' disabled'}>🧭 Plan my route${rt.stops.length > 1 ? ` · ${rt.stops.length} stops` : ''}</button><small>${rt.start ? 'Add all your stops first, then press this to get the quickest order.' : 'Set where you start (above) first.'}</small></div>`
       : rt.stops.length && !rt.start ? '<div class="rt-sum">Set where you start (above), and I’ll work out the order.</div>' : ''}
@@ -7358,6 +7469,7 @@ function renderRoute(){
   if(typing){ q.focus(); try{ q.setSelectionRange(caret, caret); }catch(e){} }
   box.querySelectorAll('[data-add]').forEach(b=>b.onclick = ()=>{ const [kind, i] = b.dataset.add.split(':'); const r = (kind==='m' ? R.mine : R.found)[+i]; if(r) addStop(r); });
   box.querySelectorAll('[data-rm]').forEach(b=>b.onclick = ()=>removeStop(b.dataset.rm));
+  box.querySelectorAll('[data-done]').forEach(b=>b.onclick = ()=>doneHere(b.dataset.done));
   const clr = box.querySelector('#rtClear'); if(clr) clr.onclick = ()=>{
     const before = rt.stops.slice(); rt.stops = []; saveRt(); stopsChanged();
     offerUndo('Cleared your route.', async ()=>{ rt.stops = before; saveRt(); stopsChanged(); });
