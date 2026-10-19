@@ -8,23 +8,25 @@ jobs:
         run: |
           UA="My-stuff-personal-route-planner/0.1 (github.com/Ph4m1k/my-stuff)"
           T=$(date -u -d 'tomorrow 07:00' +%Y-%m-%dT%H:%M:%SZ)
-          for v in v1 v2 v3 v4 v5; do
-            c=$(curl -s -o /tmp/p_$v.json -w '%{http_code}' -A "$UA" "https://api.transitous.org/api/$v/plan?fromPlace=50.0755,14.4378&toPlace=50.0960,14.4210&time=$T")
-            echo "::notice title=plan $v::$c $(head -c 300 /tmp/p_$v.json | tr '\n' ' ')"
-          done
-          H=$(curl -s -D - -o /dev/null -A "$UA" -H 'Origin: https://ph4m1k.github.io' "https://api.transitous.org/api/v5/plan?fromPlace=50.0755,14.4378&toPlace=50.0960,14.4210&time=$T" | grep -i 'access-control\|content-type\|HTTP/' | tr '\r\n' '  ')
-          echo "::notice title=cors::$H"
+          curl -s -A "$UA" "https://api.transitous.org/api/v5/plan?fromPlace=50.0755,14.4378&toPlace=50.0960,14.4210&time=$T" > /tmp/a.json
+          curl -s -A "$UA" "https://api.transitous.org/api/v5/plan?fromPlace=50.0809,14.4072&toPlace=50.0815,14.4265&time=$T" > /tmp/b.json
+          curl -s -A "$UA" "https://api.transitous.org/api/v5/plan?fromPlace=50.0755,14.4378&toPlace=50.0757,14.4381&time=$T" > /tmp/c.json
           python3 - <<'PY'
-          import json,glob
-          for f in sorted(glob.glob('/tmp/p_*.json')):
-              try: d=json.load(open(f))
-              except Exception as e: continue
+          import json
+          for f in ('/tmp/a.json','/tmp/b.json','/tmp/c.json'):
+              d=json.load(open(f))
+              print(f"::notice title={f} top::itins={len(d.get('itineraries') or [])} direct={len(d.get('direct') or [])} from={json.dumps(d.get('from'))[:300]} req={json.dumps(d.get('requestParameters'))[:200]}")
               its=d.get('itineraries') or []
-              if not its: continue
-              out=[]
-              for it in its[:3]:
-                  legs=[(l.get('mode'), l.get('routeShortName') or '', (l.get('from') or {}).get('name',''), (l.get('to') or {}).get('name',''), l.get('agencyName','')) for l in it.get('legs',[])]
-                  out.append(f"{it.get('duration')}s {it.get('startTime')}->{it.get('endTime')} transfers={it.get('transfers')} legs={legs}")
-              print(f"::notice title=itins {f}::" + ' || '.join(out)[:1800])
-              print(f"::notice title=keys {f}::" + json.dumps(list(d.keys())) + ' leg keys ' + json.dumps(list(its[0]['legs'][-1].keys()) if its[0].get('legs') else '')[:1500])
+              for name,it in (('itin0',its[0] if its else None),('direct0',(d.get('direct') or [None])[0])):
+                  if not it: continue
+                  it=json.loads(json.dumps(it))
+                  for l in it.get('legs',[]):
+                      g=l.get('legGeometry') or {}
+                      if 'points' in g: g['points']=g['points'][:40]+'…(%d)'%len(l['legGeometry']['points']) if False else g['points'][:40]
+                      l.pop('steps',None)
+                      for k in ('intermediateStops',):
+                          if k in l: l[k]=f'[{len(l[k])} stops]'
+                  s=json.dumps(it, ensure_ascii=False)
+                  for i in range(0, min(len(s), 7000), 1900):
+                      print(f"::notice title={f} {name} part{i//1900}::"+s[i:i+1900])
           PY
