@@ -7224,8 +7224,49 @@ const fmtDist = m=>m < 950 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFi
 const gmDir = (a, b, mode)=>`https://www.google.com/maps/dir/?api=1&origin=${a.lat.toFixed(6)},${a.lng.toFixed(6)}&destination=${b.lat.toFixed(6)},${b.lng.toFixed(6)}&travelmode=${mode==='walk' ? 'walking' : 'transit'}`;
 // ---- searching for a stop: your own places first, then anything on the map ----
 let rtSearchCtl = null;
+// a Google Maps link (or "50.08, 14.42") pasted into the route box: add that exact place as a stop
+async function routeFromLink(r){
+  if(rtSearchCtl){ rtSearchCtl.abort(); rtSearchCtl = null; }
+  const tok = rt.linkTok = {};
+  rt.results = null; rt.linkMsg = '';
+  if(r.short){
+    if(!(window.MYSTUFF_HOST && MYSTUFF_HOST.importLink)){
+      rt.searching = false;
+      rt.linkMsg = "Short phone links (maps.app.goo.gl) can only be opened in the app version. Here, open the link and type the place's name instead.";
+      renderRoute(); return;
+    }
+    rt.searching = true; rt.linkMsg = 'Opening the Google Maps link…'; renderRoute();
+    let res = null; try{ res = await MYSTUFF_HOST.importLink(r.url); }catch(e){}
+    if(rt.linkTok !== tok || !rt.on) return;
+    rt.searching = false;
+    const full = res && res.ok && res.resolved && parsePlaceLink(res.resolved);
+    if(full && !full.short && full.lat==null && validLatLng(res.lat, res.lng)){ const [la, ln] = gcjToGps(res.lat, res.lng); full.lat = la; full.lng = ln; }
+    if(!full || full.short || (full.lat==null && !full.name)){ rt.linkMsg = "Couldn't open that link. Try typing the place's name instead."; renderRoute(); return; }
+    r = full;
+  }
+  rt.linkMsg = ''; rt.linkTok = null;
+  if(r.lat!=null){
+    const mine = places.find(p=>validLatLng(p.lat, p.lng) && sameSpot(p, r));
+    if(mine){ addStop({placeId: mine.id, name: mine.name || 'Place', lat: mine.lat, lng: mine.lng, emoji: placeEmoji(mine)}); return; }
+    addStop({name: r.name || (r.url ? 'Place from Google Maps' : 'Spot on the map'), lat: r.lat, lng: r.lng, emoji: '📍'});
+    return;
+  }
+  if(r.name){ routeSearch(r.name); return; }
+  rt.linkMsg = "That link doesn't include where the place is. Type the place's name instead, or tap it on the map.";
+  renderRoute();
+}
 async function routeSearch(text){
-  text = String(text || '').trim(); rt.q = text;
+  text = String(text || '').trim();
+  rt.linkTok = null; rt.linkMsg = ''; rt.searching = false;
+  if(/^https?:\/\//i.test(text) || /^-?\d{1,2}\.\d+\s*[,;\s]\s*-?\d{1,3}\.\d+$/.test(text)){
+    if(text===rt.lastLink && Date.now() - rt.lastLinkAt < 5000) return;   // the same paste arriving twice (paste + typing pause)
+    rt.lastLink = text; rt.lastLinkAt = Date.now();
+    const link = parsePlaceLink(text);
+    rt.q = '';
+    if(link){ routeFromLink(link); return; }
+    rt.results = null; rt.linkMsg = "That isn't a Google Maps link. Paste a link from Google Maps, or type the place's name."; renderRoute(); return;
+  }
+  rt.q = text;
   if(!text){ rt.results = null; renderRoute(); return; }
   const mine = places.filter(p=>validLatLng(p.lat, p.lng) && norm(p.name || '').includes(norm(text))).slice(0, 6)
     .map(p=>({placeId: p.id, name: p.name || 'Place', lat: p.lat, lng: p.lng, emoji: placeEmoji(p), sub: p.address || 'Your place'}));
@@ -7275,7 +7316,8 @@ function renderRoute(){
       <button type="button" class="rt-mini-btn" id="rtLocate">Use where I am</button>
       <button type="button" class="rt-mini-btn${rt.setStart ? ' on' : ''}" id="rtPickStart">${rt.setStart ? 'Now tap the map…' : 'Choose on the map'}</button>
       ${rt.locErr ? `<small class="err">${esc(rt.locErr)}</small>` : ''}</div>
-    <form class="rt-add" id="rtAdd"><input id="rtQ" type="search" enterkeyhint="search" autocomplete="off" placeholder="Add a shop or place…" aria-label="Add a shop or place" value="${esc(rt.q)}"><button type="submit" class="pc-btn">${rt.searching ? '…' : 'Find'}</button></form>
+    <form class="rt-add" id="rtAdd"><input id="rtQ" type="search" enterkeyhint="search" autocomplete="off" placeholder="Shop name or Google Maps link…" aria-label="Add a shop or place, or paste a Google Maps link" value="${esc(rt.q)}"><button type="submit" class="pc-btn">${rt.searching ? '…' : 'Find'}</button></form>
+    ${rt.linkMsg ? `<div class="rt-empty" role="status">${rt.searching ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}${esc(rt.linkMsg)}</div>` : ''}
     ${R ? `<div class="rt-res">${R.mine.length ? `<div class="rt-sec">Your places</div>${R.mine.map((r, i)=>resRow(r, 'm', i)).join('')}` : ''}
       ${R.found ? (R.found.length ? `<div class="rt-sec">On the map</div>${R.found.map((r, i)=>resRow(r, 'f', i)).join('')}` : (R.mine.length ? '' : '<div class="rt-empty">Nothing found. Try another name, or tap the place on the map.</div>')) : '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Searching…</div>'}</div>` : ''}
     <div class="rt-hint">Or tap any of your pins, or any shop on the map, to add it. Tap a numbered pin to take it off.</div>
@@ -7299,6 +7341,7 @@ function renderRoute(){
   const q = box.querySelector('#rtQ');
   box.querySelector('#rtAdd').onsubmit = e=>{ e.preventDefault(); routeSearch(q.value); };
   q.oninput = debounce(()=>{ if(q.value.trim().length >= 2) routeSearch(q.value); else if(!q.value.trim()){ rt.q = ''; rt.results = null; renderRoute(); } }, 450);
+  q.addEventListener('paste', e=>{ const t = ((e.clipboardData && e.clipboardData.getData('text')) || '').trim(); if(/^https?:\/\//i.test(t)) setTimeout(()=>routeSearch(q.value), 0); });
   if(typing){ q.focus(); try{ q.setSelectionRange(caret, caret); }catch(e){} }
   box.querySelectorAll('[data-add]').forEach(b=>b.onclick = ()=>{ const [kind, i] = b.dataset.add.split(':'); const r = (kind==='m' ? R.mine : R.found)[+i]; if(r) addStop(r); });
   box.querySelectorAll('[data-rm]').forEach(b=>b.onclick = ()=>removeStop(b.dataset.rm));
