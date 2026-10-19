@@ -1,0 +1,30 @@
+name: diag
+on: { push: { branches: [diag] } }
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - name: transitous
+        run: |
+          UA="My-stuff-personal-route-planner/0.1 (github.com/Ph4m1k/my-stuff)"
+          T=$(date -u -d 'tomorrow 07:00' +%Y-%m-%dT%H:%M:%SZ)
+          for v in v1 v2 v3 v4 v5; do
+            c=$(curl -s -o /tmp/p_$v.json -w '%{http_code}' -A "$UA" "https://api.transitous.org/api/$v/plan?fromPlace=50.0755,14.4378&toPlace=50.0960,14.4210&time=$T")
+            echo "::notice title=plan $v::$c $(head -c 300 /tmp/p_$v.json | tr '\n' ' ')"
+          done
+          H=$(curl -s -D - -o /dev/null -A "$UA" -H 'Origin: https://ph4m1k.github.io' "https://api.transitous.org/api/v5/plan?fromPlace=50.0755,14.4378&toPlace=50.0960,14.4210&time=$T" | grep -i 'access-control\|content-type\|HTTP/' | tr '\r\n' '  ')
+          echo "::notice title=cors::$H"
+          python3 - <<'PY'
+          import json,glob
+          for f in sorted(glob.glob('/tmp/p_*.json')):
+              try: d=json.load(open(f))
+              except Exception as e: continue
+              its=d.get('itineraries') or []
+              if not its: continue
+              out=[]
+              for it in its[:3]:
+                  legs=[(l.get('mode'), l.get('routeShortName') or '', (l.get('from') or {}).get('name',''), (l.get('to') or {}).get('name',''), l.get('agencyName','')) for l in it.get('legs',[])]
+                  out.append(f"{it.get('duration')}s {it.get('startTime')}->{it.get('endTime')} transfers={it.get('transfers')} legs={legs}")
+              print(f"::notice title=itins {f}::" + ' || '.join(out)[:1800])
+              print(f"::notice title=keys {f}::" + json.dumps(list(d.keys())) + ' leg keys ' + json.dumps(list(its[0]['legs'][-1].keys()) if its[0].get('legs') else '')[:1500])
+          PY
