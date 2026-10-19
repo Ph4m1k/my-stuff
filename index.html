@@ -7236,9 +7236,10 @@ async function routeFromLink(r){
       renderRoute(); return;
     }
     rt.searching = true; rt.linkMsg = 'Opening the Google Maps link…'; renderRoute();
-    let res = null; try{ res = await MYSTUFF_HOST.importLink(r.url); }catch(e){}
-    if(rt.linkTok !== tok || !rt.on) return;
-    rt.searching = false;
+    let res = null; try{ res = await Promise.race([MYSTUFF_HOST.importLink(r.url), new Promise(ok=>setTimeout(()=>ok(null), 25000))]); }catch(e){}
+    if(rt.linkTok !== tok) return;
+    rt.linkTok = null; rt.searching = false;
+    if(!rt.on) return;
     const full = res && res.ok && res.resolved && parsePlaceLink(res.resolved);
     if(full && !full.short && full.lat==null && validLatLng(res.lat, res.lng)){ const [la, ln] = gcjToGps(res.lat, res.lng); full.lat = la; full.lng = ln; }
     if(!full || full.short || (full.lat==null && !full.name)){ rt.linkMsg = "Couldn't open that link. Try typing the place's name instead."; renderRoute(); return; }
@@ -7257,9 +7258,10 @@ async function routeFromLink(r){
 }
 async function routeSearch(text){
   text = String(text || '').trim();
+  const isLink = /^https?:\/\//i.test(text) || /^-?\d{1,2}\.\d+\s*[,;\s]\s*-?\d{1,3}\.\d+$/.test(text);
+  if(isLink && text===rt.lastLink && (rt.linkTok || Date.now() - rt.lastLinkAt < 5000)) return;   // the same paste arriving twice (paste + typing pause): keep the one already working
   rt.linkTok = null; rt.linkMsg = ''; rt.searching = false;
-  if(/^https?:\/\//i.test(text) || /^-?\d{1,2}\.\d+\s*[,;\s]\s*-?\d{1,3}\.\d+$/.test(text)){
-    if(text===rt.lastLink && Date.now() - rt.lastLinkAt < 5000) return;   // the same paste arriving twice (paste + typing pause)
+  if(isLink){
     rt.lastLink = text; rt.lastLinkAt = Date.now();
     const link = parsePlaceLink(text);
     rt.q = '';
