@@ -1609,6 +1609,10 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-sum{padding:8px 10px;border-radius:6px;background:color-mix(in srgb, var(--accent) 10%, transparent);font-size:0.84rem;}
   .rt-sum small{display:block;color:var(--muted);font-size:0.74rem;margin-top:3px;}
   .rt-acts{display:flex;flex-wrap:wrap;gap:6px;}
+  .rt-go{display:flex;flex-direction:column;gap:4px;}
+  .rt-go .pc-btn{width:100%;justify-content:center;padding:10px 12px;font-size:0.92rem;}
+  .rt-go .pc-btn:disabled{opacity:.5;cursor:default;}
+  .rt-go small{color:var(--muted);font-size:0.78rem;}
   .rt-empty{color:var(--muted);font-size:0.82rem;padding:6px 2px;}
   .pm-pin.dim{opacity:.45;}
   .pm-pin.stop .pm-dot{background:var(--accent);border-color:var(--paper);}
@@ -1622,6 +1626,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
     /* the route planner sits over the bottom of the map on a phone */
     .places.route{position:relative;}
     .places.route .pl-side{display:flex;position:absolute;left:0;right:0;bottom:0;max-height:55%;z-index:8;padding:10px 12px 12px;background:var(--card);border-top:1px solid var(--line);border-radius:14px 14px 0 0;box-shadow:0 -6px 20px rgba(0,0,0,.18);}
+    .places.route .rt-go{position:sticky;bottom:-6px;z-index:2;background:var(--card);padding:8px 0 6px;margin-top:-4px;box-shadow:0 -8px 10px -6px var(--card);}
     .places.route.rt-mini .pl-side{max-height:92px;}
     .places.route .rt-min{display:inline-block;}
     .places.route .pl-mapwrap{position:relative !important;left:auto !important;width:auto !important;height:auto !important;}
@@ -6568,7 +6573,7 @@ function ensurePlacesMap(){
   // outside Claude the map can be drawn live (smooth at every zoom); otherwise, or if that can't start, the picture map
   plMap = (HOST && HOST.createMap && HOST.createMap(mapEl)) || createMap(mapEl);
   plMap.onClick = ll=>{
-    if(rt.on){ if(rt.setStart){ rt.start = {lat: ll[0], lng: ll[1]}; rt.startSrc = 'map'; rt.setStart = false; rt.locErr = ''; renderPlaces(); planSoon(); } return; }
+    if(rt.on){ if(rt.setStart){ rt.start = {lat: ll[0], lng: ll[1]}; rt.startSrc = 'map'; rt.setStart = false; rt.locErr = ''; replanIfAsked(); } return; }
     if(plPick){ pickedSpot(ll[0], ll[1]); return; }
     selectPlace(null);
   };
@@ -7072,7 +7077,7 @@ function setRouteMode(on){
   if(rt.on){
     plSel = null; plPoi = null; plPick = null; closeDetail && closeDetail();
     if(!rt.start && !rt.locating) locateMe();
-    renderPlaces(); planSoon(true);
+    replanIfAsked();
   }else{
     if(plMap && plMap.setRoute) plMap.setRoute(null);
     renderPlaces();
@@ -7083,7 +7088,7 @@ function locateMe(){
   rt.locating = true; rt.locErr = ''; renderRoute();
   navigator.geolocation.getCurrentPosition(pos=>{
     rt.locating = false; rt.start = {lat: pos.coords.latitude, lng: pos.coords.longitude}; rt.startSrc = 'gps'; rt.locErr = '';
-    renderPlaces(); planSoon(true);
+    replanIfAsked();
   }, e=>{
     rt.locating = false;
     rt.locErr = e && e.code===1 ? 'Location is turned off for this app. Allow it in your browser, or choose your start on the map.' : 'Couldn’t find where you are. Try again, or choose your start on the map.';
@@ -7097,13 +7102,13 @@ function addStop(st){
   if(dup){ toast(`“${dup.name}” is already on your route.`); return; }
   if(rt.stops.length >= 12){ toast('A route can have up to 12 stops.'); return; }
   rt.stops.push({k: st.placeId || ('s' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)), placeId: st.placeId || '', name: st.name || 'Stop', lat: +st.lat, lng: +st.lng, emoji: st.emoji || '📍'});
-  rt.results = null; rt.q = ''; saveRt(); renderPlaces(); planSoon(true);
+  rt.results = null; rt.q = ''; saveRt(); stopsChanged();
   toast(`Added “${st.name || 'stop'}” to your route.`);
 }
 function removeStop(k){
   const i = rt.stops.findIndex(x=>x.k===k); if(i < 0) return;
-  const [gone] = rt.stops.splice(i, 1); saveRt(); renderPlaces(); planSoon(true);
-  offerUndo(`Took “${gone.name}” off your route.`, async ()=>{ rt.stops.splice(Math.min(i, rt.stops.length), 0, gone); saveRt(); renderPlaces(); planSoon(true); });
+  const [gone] = rt.stops.splice(i, 1); saveRt(); stopsChanged();
+  offerUndo(`Took “${gone.name}” off your route.`, async ()=>{ rt.stops.splice(Math.min(i, rt.stops.length), 0, gone); saveRt(); stopsChanged(); });
 }
 function routePinTapped(id){
   if(id==='__start' || id==='__poi' || id==='__temp') return;
@@ -7176,10 +7181,14 @@ function bestOrder(c){
   return o;
 }
 let planTimer = null, planSeq = 0;
+// the order is worked out only when you press "Plan my route", so you can add all your stops first.
+// Adding or removing a stop clears the old answer; changing the start or walking/transport re-plans one you already asked for.
+function stopsChanged(){ rt.asked = false; rt.res = null; rt.busy = false; planSeq++; clearTimeout(planTimer); drawRoute(); renderPlaces(); }
+function replanIfAsked(){ if(rt.asked && rt.stops.length) planSoon(true); else { drawRoute(); renderPlaces(); } }
 function planSoon(now){ clearTimeout(planTimer); planTimer = setTimeout(planRoute, now ? 30 : 300); }
 async function planRoute(){
   const seq = ++planSeq;
-  if(!rt.on) return;
+  if(!rt.on || !rt.asked) return;
   if(!rt.start || !rt.stops.length){ rt.res = null; rt.busy = false; drawRoute(); renderPlaces(); return; }
   rt.busy = true; rt.err = ''; renderRoute();
   const key = routeKey(), pts = [rt.start, ...rt.stops];      // (the stops as they are now: if they change meanwhile, this result is thrown away)
@@ -7332,12 +7341,14 @@ function renderRoute(){
         ? `<div class="rt-sum">≈ <b>${fmtDur(res.total.dur)}</b> walking · ${fmtDist(res.total.dist)}${rt.stops.length > 1 ? ', in the quickest order' : ''}.${res.est ? '<small>The walking route service couldn’t be reached, so these are estimates from straight-line distances.</small>' : ''}</div>`
         : `<div class="rt-sum">Stops in the shortest order (${fmtDist(res.total.dist)} in all).<small>Tram, metro and bus times aren’t available here. Tap <b>Go</b> at each stop for public transport directions in Google Maps.</small></div>`)
       : rt.busy ? '<div class="rt-sum"><span class="busy-spin" aria-hidden="true"></span>Working out the quickest order…</div>'
+      : rt.stops.length && !rt.asked ? `<div class="rt-go"><button type="button" class="pc-btn pc-main" id="rtPlan"${rt.start ? '' : ' disabled'}>🧭 Plan my route${rt.stops.length > 1 ? ` · ${rt.stops.length} stops` : ''}</button><small>${rt.start ? 'Add all your stops first, then press this to get the quickest order.' : 'Set where you start (above) first.'}</small></div>`
       : rt.stops.length && !rt.start ? '<div class="rt-sum">Set where you start (above), and I’ll work out the order.</div>' : ''}
     ${rt.stops.length ? `<div class="rt-acts">${res && rt.mode==='walk' && rt.start ? `<a class="pc-btn pc-main" target="_blank" rel="noopener noreferrer" href="${esc(`https://www.google.com/maps/dir/?api=1&origin=${rt.start.lat.toFixed(6)},${rt.start.lng.toFixed(6)}&destination=${ordered[ordered.length - 1].lat.toFixed(6)},${ordered[ordered.length - 1].lng.toFixed(6)}${ordered.length > 1 ? `&waypoints=${ordered.slice(0, -1).map(s=>`${s.lat.toFixed(6)},${s.lng.toFixed(6)}`).join('|')}` : ''}&travelmode=walking`)}">${GMAPS_SVG}Open the whole route</a>` : ''}
       <button type="button" class="pc-btn" id="rtClear">Clear route</button></div>` : ''}`;
   // wiring
   box.querySelector('#rtMin').onclick = ()=>{ rt.mini = !rt.mini; renderRoute(); };
-  box.querySelectorAll('.rt-modes [data-m]').forEach(b=>b.onclick = ()=>{ if(rt.mode===b.dataset.m) return; rt.mode = b.dataset.m; rt.res = null; saveRt(); renderPlaces(); planSoon(true); });
+  const pb = box.querySelector('#rtPlan'); if(pb) pb.onclick = ()=>{ if(!rt.start || !rt.stops.length) return; rt.asked = true; rt.busy = true; renderRoute(); planSoon(true); };
+  box.querySelectorAll('.rt-modes [data-m]').forEach(b=>b.onclick = ()=>{ if(rt.mode===b.dataset.m) return; rt.mode = b.dataset.m; rt.res = null; saveRt(); replanIfAsked(); });
   box.querySelector('#rtLocate').onclick = ()=>{ rt.setStart = false; locateMe(); };
   box.querySelector('#rtPickStart').onclick = ()=>{ rt.setStart = !rt.setStart; if(rt.setStart && !isWide()) rt.mini = true; renderRoute(); };
   const q = box.querySelector('#rtQ');
@@ -7348,8 +7359,8 @@ function renderRoute(){
   box.querySelectorAll('[data-add]').forEach(b=>b.onclick = ()=>{ const [kind, i] = b.dataset.add.split(':'); const r = (kind==='m' ? R.mine : R.found)[+i]; if(r) addStop(r); });
   box.querySelectorAll('[data-rm]').forEach(b=>b.onclick = ()=>removeStop(b.dataset.rm));
   const clr = box.querySelector('#rtClear'); if(clr) clr.onclick = ()=>{
-    const before = rt.stops.slice(); rt.stops = []; rt.res = null; saveRt(); drawRoute(); renderPlaces();
-    offerUndo('Cleared your route.', async ()=>{ rt.stops = before; saveRt(); renderPlaces(); planSoon(true); });
+    const before = rt.stops.slice(); rt.stops = []; saveRt(); stopsChanged();
+    offerUndo('Cleared your route.', async ()=>{ rt.stops = before; saveRt(); stopsChanged(); });
   };
 }
 
