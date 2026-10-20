@@ -7383,6 +7383,7 @@ async function routeSearch(text){
   text = String(text || '').trim();
   const isLink = /^https?:\/\//i.test(text) || /^-?\d{1,2}\.\d+\s*[,;\s]\s*-?\d{1,3}\.\d+$/.test(text);
   if(isLink && text===rt.lastLink && (rt.linkTok || Date.now() - rt.lastLinkAt < 5000)) return;   // the same paste arriving twice (paste + typing pause): keep the one already working
+  if(!isLink && text && text===rt.q && rt.searching && !rt.linkTok) return;   // already looking for exactly this (Find pressed again, or Enter + the typing pause)
   rt.linkTok = null; rt.linkMsg = ''; rt.searching = false;
   if(isLink){
     rt.lastLink = text; rt.lastLinkAt = Date.now();
