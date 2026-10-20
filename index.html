@@ -770,8 +770,14 @@ async function searchMapTiler(text, lat, lng, signal){
   });
 }
 async function searchPhoton(text, lat, lng, signal){
-  const ask = lang=>fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&lat=${(+lat).toFixed(5)}&lon=${(+lng).toFixed(5)}&limit=8${lang ? '&lang=' + lang : ''}`, { signal })
-    .then(r=>r.ok ? r.json() : { features: [] }).catch(e=>{ if(signal && signal.aborted) throw e; return { features: [] }; });
+  // Photon is sometimes slow: after 5 seconds stop waiting for it (the other search has usually answered by then)
+  const ask = lang=>{
+    const c = new AbortController(), t = setTimeout(()=>c.abort(), 5000);
+    const stop = ()=>c.abort(); if(signal) signal.addEventListener('abort', stop, { once: true });
+    return fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&lat=${(+lat).toFixed(5)}&lon=${(+lng).toFixed(5)}&limit=8${lang ? '&lang=' + lang : ''}`, { signal: c.signal })
+      .then(r=>r.ok ? r.json() : { features: [] }).catch(e=>{ if(signal && signal.aborted) throw e; return { features: [] }; })
+      .finally(()=>{ clearTimeout(t); if(signal) signal.removeEventListener('abort', stop); });
+  };
   // asked in the local language (finds the right place), and in English (for the English name, when there is one)
   const [fc, en] = await Promise.all([ask(''), ask('en')]);
   const enName = new Map((en.features || []).map(f=>[(f.properties || {}).osm_type + (f.properties || {}).osm_id, (f.properties || {}).name]));
@@ -7393,9 +7399,18 @@ async function routeSearch(text){
   if(rtSearchCtl) rtSearchCtl.abort();
   const ctl = rtSearchCtl = new AbortController();
   let found = [];
+  const shape = list=>list.filter(r=>validLatLng(r.lat, r.lng) && !mine.some(m=>sameSpot(m, r))).slice(0, 8)
+    .map(r=>({name: r.name, lat: r.lat, lng: r.lng, emoji: r.emoji || (r.categories && r.categories.length ? emojiForCategories(r.categories) : '📍'), sub: r.address || ''}));
+  // show what the quickest search finds straight away; the rest joins in when it's ready
+  const partial = [];
+  const part = list=>{
+    if(ctl !== rtSearchCtl || !list || !list.length) return;
+    for(const x of list) if(!partial.some(o=>Math.abs(o.lat - x.lat) < 0.0008 && Math.abs(o.lng - x.lng) < 0.0008)) partial.push(x);
+    rt.results = {mine, found: shape(partial)}; renderRoute();
+  };
   try{
     const [clat, clng] = rt.start ? [rt.start.lat, rt.start.lng] : plMap.center();
-    if(HOST && HOST.searchPlaces) found = await HOST.searchPlaces(text, clat, clng, ctl.signal);
+    if(HOST && HOST.searchPlaces) found = await HOST.searchPlaces(text, clat, clng, ctl.signal, part);
     else{
       const mcp = await getMcp();
       if(mcp){
@@ -7408,8 +7423,7 @@ async function routeSearch(text){
   }catch(e){ if(ctl.signal.aborted) return; }
   if(ctl !== rtSearchCtl) return;
   rt.searching = false;
-  rt.results = {mine, found: found.filter(r=>validLatLng(r.lat, r.lng) && !mine.some(m=>sameSpot(m, r))).slice(0, 8)
-    .map(r=>({name: r.name, lat: r.lat, lng: r.lng, emoji: r.emoji || (r.categories && r.categories.length ? emojiForCategories(r.categories) : '📍'), sub: r.address || ''}))};
+  rt.results = {mine, found: (found && found.length) || !(rt.results && rt.results.found && rt.results.found.length) ? shape(found || []) : rt.results.found};
   renderRoute();
 }
 function renderRoute(){
@@ -7435,10 +7449,10 @@ function renderRoute(){
       <button type="button" class="rt-mini-btn" id="rtLocate">Use where I am</button>
       <button type="button" class="rt-mini-btn${rt.setStart ? ' on' : ''}" id="rtPickStart">${rt.setStart ? 'Now tap the map…' : 'Choose on the map'}</button>
       ${rt.locErr ? `<small class="err">${esc(rt.locErr)}</small>` : ''}</div>
-    <form class="rt-add" id="rtAdd"><input id="rtQ" type="search" enterkeyhint="search" autocomplete="off" placeholder="Shop name or Google Maps link…" aria-label="Add a shop or place, or paste a Google Maps link" value="${esc(rt.q)}"><button type="submit" class="pc-btn">${rt.searching ? '…' : 'Find'}</button></form>
+    <form class="rt-add" id="rtAdd"><input id="rtQ" type="search" enterkeyhint="search" autocomplete="off" placeholder="Shop name or Google Maps link…" aria-label="Add a shop or place, or paste a Google Maps link" value="${esc(rt.q)}"><button type="submit" class="pc-btn"${rt.searching ? ' aria-busy="true"' : ''}>${rt.searching ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}Find</button></form>
     ${rt.linkMsg ? `<div class="rt-empty" role="status">${rt.searching ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}${esc(rt.linkMsg)}</div>` : ''}
     ${R ? `<div class="rt-res">${R.mine.length ? `<div class="rt-sec">Your places</div>${R.mine.map((r, i)=>resRow(r, 'm', i)).join('')}` : ''}
-      ${R.found ? (R.found.length ? `<div class="rt-sec">On the map</div>${R.found.map((r, i)=>resRow(r, 'f', i)).join('')}` : (R.mine.length ? '' : '<div class="rt-empty">Nothing found. Try another name, or tap the place on the map.</div>')) : '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Searching…</div>'}</div>` : ''}
+      ${R.found ? (R.found.length ? `<div class="rt-sec">On the map</div>${R.found.map((r, i)=>resRow(r, 'f', i)).join('')}${rt.searching ? '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Looking for more…</div>' : ''}` : (R.mine.length ? '' : '<div class="rt-empty">Nothing found. Try another name, or tap the place on the map.</div>')) : '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Searching…</div>'}</div>` : ''}
     <div class="rt-hint">Or tap any of your pins, or any shop on the map, to add it. Tap a numbered pin to take it off.</div>
     ${rt.stops.length ? `<ol class="rt-stops">${ordered.map((s, i)=>{ const leg = res && res.legs[i];
         const tr = leg && rt.mode==='transit' && leg.tr;
@@ -7464,7 +7478,7 @@ function renderRoute(){
   box.querySelector('#rtPickStart').onclick = ()=>{ rt.setStart = !rt.setStart; if(rt.setStart && !isWide()) rt.mini = true; renderRoute(); };
   const q = box.querySelector('#rtQ');
   box.querySelector('#rtAdd').onsubmit = e=>{ e.preventDefault(); routeSearch(q.value); };
-  q.oninput = debounce(()=>{ if(q.value.trim().length >= 2) routeSearch(q.value); else if(!q.value.trim()){ rt.q = ''; rt.results = null; renderRoute(); } }, 450);
+  q.oninput = debounce(()=>{ if(q.value.trim().length >= 2) routeSearch(q.value); else if(!q.value.trim()){ rt.q = ''; rt.results = null; renderRoute(); } }, 350);
   q.addEventListener('paste', e=>{ const t = ((e.clipboardData && e.clipboardData.getData('text')) || '').trim(); if(/^https?:\/\//i.test(t)) setTimeout(()=>routeSearch(q.value), 0); });
   if(typing){ q.focus(); try{ q.setSelectionRange(caret, caret); }catch(e){} }
   box.querySelectorAll('[data-add]').forEach(b=>b.onclick = ()=>{ const [kind, i] = b.dataset.add.split(':'); const r = (kind==='m' ? R.mine : R.found)[+i]; if(r) addStop(r); });
