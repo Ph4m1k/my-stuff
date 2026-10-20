@@ -865,6 +865,9 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .add-btn{background:var(--accent);color:var(--card);border:none;padding:10px 18px;
     border-radius:3px;font-size:0.9rem;}
   .add-btn:active{opacity:0.85;}
+  .rt-btn{background:var(--card);color:var(--accent);border:1px solid var(--accent);padding:9px 14px;border-radius:3px;font-size:0.9rem;cursor:pointer;white-space:nowrap;}
+  .rt-btn.on{background:color-mix(in srgb, var(--accent) 14%, var(--card));font-weight:600;}
+  @media (max-width:480px){ .rt-btn{padding:9px 10px;} }
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:16px;}
   .card{background:var(--card);border:1px solid var(--line);border-radius:4px;overflow:hidden;
     cursor:pointer;transition:transform .12s ease;}
@@ -2000,7 +2003,6 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   <button type="button" class="nav-item" data-mod="bucket" onclick="switchModule('bucket')" title="Bucket list"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 17.5l5-8 3 4.5 2-3 5 6.5z"/><path d="M11 13V3.5l4 1.5-4 1.5"/></svg><span class="nav-label">Bucket list</span><span class="nav-n" id="navN_bucket"></span></button>
   <button type="button" class="nav-item" data-mod="notes" onclick="switchModule('notes')" title="Notes"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3.5 3.5v11.5H5z"/><path d="M12 2.5V6h3.5M7.5 10h5.5M7.5 13h5.5"/></svg><span class="nav-label">Notes</span><span class="nav-n" id="navN_notes"></span></button>
   <button type="button" class="nav-item" data-mod="places" onclick="switchModule('places')" title="Places"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17.5s5.5-5.2 5.5-9.3a5.5 5.5 0 00-11 0c0 4.1 5.5 9.3 5.5 9.3z"/><circle cx="10" cy="8.2" r="2"/></svg><span class="nav-label">Places</span><span class="nav-n" id="navN_places"></span></button>
-  <button type="button" class="nav-item" data-mod="route" onclick="switchModule('route')" title="Route planner"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="15" r="2"/><circle cx="15" cy="5" r="2"/><path d="M7 15h5.5a2.5 2.5 0 000-5h-5a2.5 2.5 0 010-5H13"/></svg><span class="nav-label">Route</span><span class="nav-n" id="navN_route"></span></button>
   <button type="button" class="nav-item nav-ext" data-mod="globe" onclick="openGlobe()" title="God's Eye View (opens in a new tab; runs on your computer)"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M2.5 10h15M10 2.5c2.2 2.3 3.2 4.8 3.2 7.5s-1 5.2-3.2 7.5c-2.2-2.3-3.2-4.8-3.2-7.5s1-5.2 3.2-7.5z"/></svg><span class="nav-label">Globe <span class="nav-extmark" aria-hidden="true">↗</span></span><span class="nav-n"></span></button>
   <div class="side-hint" id="sideHint">Hold a module and drag it to reorder</div>
 </nav>
@@ -2012,6 +2014,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
     <div class="head-actions">
       <span class="count" id="count"></span>
       <button class="head-link" id="headLink" onclick="openCatPage()">Categories &amp; locations</button>
+      <button type="button" class="rt-btn" id="rtBtn" hidden onclick="toggleRoute()" aria-pressed="false">🧭 Route</button>
       <button class="add-btn" id="addBtn" onclick="MOD().add()">+ Add item</button>
     </div>
   </header>
@@ -2610,7 +2613,11 @@ MODULES.route = {
   list: ()=>rt.stops, loaded: ()=>true, add: ()=>{ rt.mini = false; renderRoute(); setTimeout(()=>{ const i = document.getElementById('rtQ'); if(i) i.focus(); }, 30); },
 };
 let currentMod = 'inventory';
-try{ const m = localStorage.getItem('app-module'); if(MODULES[m]) currentMod = m; }catch(e){}
+// the route planner lives inside Places (the 🧭 Route button); whether it was open is remembered
+const RT_OPEN_KEY = 'route-open';
+let rtOpen = false;
+try{ rtOpen = localStorage.getItem(RT_OPEN_KEY)==='1'; }catch(e){}
+try{ let m = localStorage.getItem('app-module'); if(m==='route'){ m = 'places'; rtOpen = true; } if(MODULES[m]) currentMod = m; }catch(e){}
 const MOD = ()=>MODULES[currentMod];
 // the route planner's state (it's here, early, because the menu counts and the first screen may need it)
 const RT_KEY = 'route-plan';
@@ -2766,7 +2773,9 @@ function debounce(fn, ms){ let t=null; return ()=>{ clearTimeout(t); t=setTimeou
 
 // switch the whole page to another module
 function switchModule(mod, opts){
+  if(mod==='route'){ mod = 'places'; setRtOpen(true); }      // (the old Route module: now Places with the planner open)
   if(!MODULES[mod]) return;
+  document.getElementById('rtBtn').hidden = mod!=='places';
   const same = mod===currentMod && F;
   if((currentMod==='places' || currentMod==='route') && mod!==currentMod){ plPick = null; document.getElementById('placeOverlay').classList.remove('show'); }
   if(currentMod==='notes' && mod!=='notes'){
@@ -2789,7 +2798,8 @@ function switchModule(mod, opts){
     document.title = `${M.title} – My stuff`;
     if(!isWide()) toggleSide(false);
     enterPlaces();
-    setRouteMode(mod==='route');
+    setRouteMode(rtOpen);
+    syncPlacesHead();
     return;
   }
   if(isNotes){
@@ -3127,7 +3137,7 @@ function updateNavCounts(){
   const g = document.getElementById('navN_bucket'); if(g) g.textContent = goalsLoaded ? goals.filter(x=>!x.done).length : '';
   const n = document.getElementById('navN_notes'); if(n) n.textContent = notesLoaded ? notes.length : '';
   const pl = document.getElementById('navN_places'); if(pl) pl.textContent = placesLoaded ? places.filter(p=>(p.status||'want')!=='been').length : '';
-  const rn = document.getElementById('navN_route'); if(rn) rn.textContent = rt.stops.length || '';
+  syncPlacesHead();
   const a = document.getElementById('navN_inventory'), b = document.getElementById('navN_wishlist');
   if(a) a.textContent = itemsLoaded ? items.length : '';
   if(b) b.textContent = wishesLoaded ? wishes.filter(w=>!w.bought).length : '';
@@ -6888,12 +6898,25 @@ function renderPlaceCard(){
       <a class="pc-btn pc-main" href="${esc(gmapsHref(p))}" target="_blank" rel="noopener noreferrer">${GMAPS_SVG}Google Maps</a>
       <a class="pc-btn" href="${esc(directionsHref(p))}" target="_blank" rel="noopener noreferrer">Directions</a>
       <button type="button" class="pc-btn" data-a="open">Details</button>
+      ${routeBtnHTML(p)}
     </div>`;
   card.querySelector('.pc-x').onclick = ()=>selectPlace(null);
+  wireRouteBtn(card, {placeId: p.id, name: p.name || 'Place', lat: p.lat, lng: p.lng, emoji: placeEmoji(p)});
   card.querySelector('[data-a=open]').onclick = ()=>openPlaceDetail(p.id);
   const ok = card.querySelector('[data-a=ok]'); if(ok) ok.onclick = ()=>reviewedPlace(p.id);
   const mv = card.querySelector('[data-a=move]'); if(mv) mv.onclick = ()=>startMovePlace(p.id);
   wireSiblings(card, p);
+}
+// "Add to route" on a place's card (or "Open route" once it's on it)
+const onRoute = p=>rt.stops.some(x=>(p.id && x.placeId===p.id) || sameSpot(x, p));
+const routeBtnHTML = p=>validLatLng(p.lat, p.lng) ? `<button type="button" class="pc-btn" data-a="route">${onRoute(p) ? '🧭 On your route · open' : '➕ Add to route'}</button>` : '';
+function wireRouteBtn(card, st){
+  const b = card.querySelector('[data-a=route]'); if(!b) return;
+  b.onclick = ()=>{
+    if(onRoute({id: st.placeId, lat: st.lat, lng: st.lng})){ toggleRoute(true); return; }
+    addStop(st);
+    b.textContent = '🧭 On your route · open';
+  };
 }
 // a place tapped on the map that isn't one of yours yet: what it is, and a button to save it
 function renderPoiCard(card){
@@ -6911,8 +6934,10 @@ function renderPoiCard(card){
       <button type="button" class="pc-btn pc-main" data-a="save">＋ Save to my places</button>
       <a class="pc-btn" href="https://www.google.com/maps/search/${encodeURIComponent(q.local || q.name)}/@${ll},17z" target="_blank" rel="noopener noreferrer">${GMAPS_SVG}Google Maps</a>
       <a class="pc-btn" href="https://www.google.com/maps/dir/?api=1&destination=${ll}" target="_blank" rel="noopener noreferrer">Directions</a>
+      ${routeBtnHTML(q)}
     </div>`;
   card.querySelector('.pc-x').onclick = ()=>{ plPoi = null; renderPlaces(); };
+  wireRouteBtn(card, {name: q.name, lat: q.lat, lng: q.lng, emoji: q.emoji || '📍'});
   card.querySelector('[data-a=save]').onclick = ()=>{
     const t = plPoi; plPoi = null;
     plPick = {mode:'add', temp:[t.lat, t.lng], link:null}; renderPlaces();
@@ -7093,6 +7118,25 @@ async function removeInbox(it){
 // Start where you are, visit every stop, finish at the last one. Walking times come from a free OpenStreetMap
 // route service; for public transport the stops are put in order by distance and each step opens Google Maps.
 function saveRt(){ try{ localStorage.setItem(RT_KEY, JSON.stringify({stops: rt.stops, mode: rt.mode})); }catch(e){} updateNavCounts(); }
+function setRtOpen(on){ rtOpen = !!on; try{ localStorage.setItem(RT_OPEN_KEY, rtOpen ? '1' : '0'); }catch(e){} }
+function toggleRoute(force){
+  if(currentMod!=='places') return;
+  const on = force==null ? !rt.on : !!force;
+  setRtOpen(on); setRouteMode(on); syncPlacesHead();
+  if(on && rt.stops.length && !isWide()) rt.mini = false;
+}
+// the header while in Places: the Route button (with how many stops are waiting) and what "+ Add" does
+function syncPlacesHead(){
+  const b = document.getElementById('rtBtn'); if(!b) return;
+  const n = rt.stops.length;
+  b.textContent = rt.on ? '✕ Close route' : `🧭 Route${n ? ` · ${n}` : ''}`;
+  b.classList.toggle('on', rt.on); b.setAttribute('aria-pressed', rt.on ? 'true' : 'false');
+  b.title = rt.on ? 'Close the route planner' : 'Plan the quickest way past several places';
+  if(currentMod!=='places') return;
+  document.getElementById('modTitle').textContent = 'Places';
+  document.getElementById('addBtn').textContent = rt.on ? '+ Add stop' : '+ Add place';
+  document.title = `${rt.on ? 'Route' : 'Places'} – My stuff`;
+}
 function setRouteMode(on){
   rt.on = !!on;
   document.getElementById('placesView').classList.toggle('route', rt.on);
@@ -7126,7 +7170,7 @@ function addStop(st){
   if(rt.stops.length >= 12){ toast('A route can have up to 12 stops.'); return; }
   rt.stops.push({k: st.placeId || ('s' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)), placeId: st.placeId || '', name: st.name || 'Stop', lat: +st.lat, lng: +st.lng, emoji: st.emoji || '📍'});
   rt.results = null; rt.q = ''; saveRt(); stopsChanged();
-  toast(`Added “${st.name || 'stop'}” to your route.`);
+  toast(rt.on ? `Added “${st.name || 'stop'}” to your route.` : `Added “${st.name || 'stop'}” to your route (${rt.stops.length} ${rt.stops.length===1 ? 'stop' : 'stops'}). Tap 🧭 Route to plan it.`);
 }
 function removeStop(k){
   const i = rt.stops.findIndex(x=>x.k===k); if(i < 0) return;
@@ -8029,7 +8073,7 @@ function setupPlaces(){
     if(plPick){ cancelPick(); return; }
   });
 }
-MODULES.places.add = startAddPlace;
+MODULES.places.add = ()=>{ if(rt.on) MODULES.route.add(); else startAddPlace(); };
 
 MODULES.notes.add = ()=>{ closeTrash(); newNote(); };
 
