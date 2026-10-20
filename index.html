@@ -1334,6 +1334,30 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pl-side{display:flex;flex-direction:column;min-height:0;min-width:0;}
   #plq{padding:10px 12px;border:1px solid var(--line);border-radius:3px;background:var(--card);color:var(--ink);font-family:-apple-system,sans-serif;font-size:0.9rem;margin-bottom:10px;}
   .pl-filter{display:flex;gap:6px;margin-bottom:10px;font-family:-apple-system,sans-serif;flex-wrap:wrap;}
+  .pl-lists{display:flex;gap:6px;margin:10px 0 8px;overflow-x:auto;scrollbar-width:thin;padding-bottom:2px;font-family:-apple-system,sans-serif;}
+  .pl-lists button,.pl-lpick button{flex:0 0 auto;display:inline-flex;align-items:center;gap:5px;padding:6px 11px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-size:0.8rem;cursor:pointer;white-space:nowrap;}
+  .pl-lists button .n{color:var(--muted);font-size:0.7rem;}
+  .pl-lists button.on{border-color:var(--accent);background:color-mix(in srgb, var(--accent) 16%, var(--card));font-weight:600;}
+  .pl-lists button.new,.pl-lpick button.new{border-style:dashed;color:var(--muted);}
+  .pl-lnew{display:flex;gap:6px;margin:0 0 8px;font-family:-apple-system,sans-serif;}
+  .pl-lnew input{flex:1;min-width:0;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);font:inherit;font-size:0.85rem;}
+  .pl-lnew button{padding:7px 11px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-size:0.8rem;cursor:pointer;}
+  .pl-lnew button.go{background:var(--accent);border-color:var(--accent);color:var(--paper);}
+  .pl-lhead{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:0 0 8px;font-family:-apple-system,sans-serif;font-size:0.8rem;color:var(--muted);}
+  .pl-lhead b{color:var(--ink);font-size:0.9rem;margin-right:auto;}
+  .pl-lhead[hidden]{display:none;}
+  .pl-lhead button{padding:4px 9px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-size:0.76rem;cursor:pointer;}
+  .pl-lhead button.del{color:#a13f3f;}
+  .pl-types{display:flex;align-items:center;gap:5px;margin:-2px 0 10px;flex-wrap:wrap;font-family:-apple-system,sans-serif;}
+  .pl-types button{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:none;color:var(--ink);font-size:0.75rem;cursor:pointer;}
+  .pl-types button .n{color:var(--muted);font-size:0.68rem;}
+  .pl-types button.on{background:var(--ink);border-color:var(--ink);color:var(--paper);}
+  .pl-types button.on .n{color:inherit;opacity:.75;}
+  .pl-types select{margin-left:auto;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);font:inherit;font-size:0.76rem;}
+  .pl-dist{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink);}
+  .pl-lpick{display:flex;flex-wrap:wrap;gap:6px;font-family:-apple-system,sans-serif;}
+  .pl-lpick button.on{border-color:var(--accent);background:var(--accent);color:var(--paper);}
+  .pl-lpick .pl-lnew{flex-basis:100%;margin:2px 0 0;}
   .pl-filter button{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-size:0.78rem;cursor:pointer;}
   .pl-filter button .n{color:var(--muted);font-size:0.7rem;}
   .pl-filter button.on{background:var(--accent);border-color:var(--accent);color:var(--paper);}
@@ -1566,6 +1590,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pd-status{display:inline-block;padding:2px 9px;border-radius:999px;font-family:-apple-system,sans-serif;font-size:0.75rem;background:color-mix(in srgb, var(--ink) 8%, transparent);}
   .pd-st-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:14px 0 4px;font-family:-apple-system,sans-serif;font-size:0.85rem;color:var(--muted);}
   .pd-st-row .p-status button{padding:7px 11px;font-size:0.82rem;}
+  .pd-st-row .pl-lpick{flex:1;}
   .pd-status.been{background:color-mix(in srgb, var(--accent) 18%, transparent);color:var(--accent);font-weight:600;}
   .pd-maps{margin:14px 0 4px;}
   .pf-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;padding-right:30px;}
@@ -2057,9 +2082,12 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   <div class="places" id="placesView" hidden>
     <div class="pl-side">
       <input type="search" id="plq" placeholder="Search your places" aria-label="Search your places">
+      <div class="pl-lists" id="plLists" role="group" aria-label="Collections"></div>
+      <div class="pl-lhead" id="plLHead" hidden></div>
       <div class="pl-filter" id="plFilter" role="group" aria-label="Show">
         <button type="button" data-f="all">All <span class="n"></span></button><button type="button" data-f="want">Want to go <span class="n"></span></button><button type="button" data-f="regular">Regular <span class="n"></span></button><button type="button" data-f="been">Been there <span class="n"></span></button>
       </div>
+      <div class="pl-types" id="plTypes"></div>
       <button type="button" class="pl-inboxbtn" id="plInboxBtn" hidden></button>
       <div class="pl-list" id="plList"></div>
       <div class="rt-panel" id="rtPanel" aria-label="Route planner"></div>
@@ -2399,6 +2427,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
       <input id="p_emoji" class="p-emoji-in" type="text" maxlength="8" aria-label="Your own emoji" placeholder="or type any emoji">
       <div class="p-colors" id="p_colors"></div></div>
     <div class="field"><label>Status</label><div class="p-status" id="p_status" role="group"><button type="button" data-s="want">Want to go</button><button type="button" data-s="regular">⭐ Regular</button><button type="button" data-s="been">✓ Been there</button></div></div>
+    <div class="field"><label>Collections</label><div class="pl-lpick" id="p_lists"></div></div>
     <div class="field"><label for="p_note">Notes</label><textarea id="p_note" placeholder="What to order, best time to go, who recommended it…"></textarea></div>
     <div class="field"><label for="p_link">Where you found it <small>(TikTok, Instagram, website…)</small></label><input id="p_link" type="url" inputmode="url" placeholder="Paste the link"></div>
     <div class="field"><label for="p_gmaps">Google Maps link <small>(optional)</small></label><input id="p_gmaps" type="url" inputmode="url" placeholder="Opens exactly this place in Google Maps"></div>
@@ -2478,6 +2507,12 @@ async function init(){
     placesLoaded = true;
     scheduleRender();
   }, err=>{ placesLoaded = true; scheduleRender(); });
+  db.doc('meta/placeLists').onSnapshot(snap=>{
+    const d = snap.exists ? snap.data() : null;
+    placeLists = d && Array.isArray(d.list) ? d.list.filter(l=>l && l.id && l.name).map(l=>({id: String(l.id), name: String(l.name).slice(0, 40), emoji: String(l.emoji || '📁').slice(0, 8)})) : [];
+    if(plList!=='all' && !listOf(plList)) plList = 'all';
+    if(currentMod==='places') renderPlaces();
+  }, err=>{});
   db.collection('inbox').orderBy('createdAt','desc').onSnapshot(snap=>{
     inbox = snap.docs.map(d=>({id:d.id, ...d.data()}));
     if(currentMod==='places' || currentMod==='route') renderPlaces();
@@ -3923,7 +3958,7 @@ function setupDetailPhoto(id, col){
   ['dragleave','dragend'].forEach(t=>box.addEventListener(t, ()=>box.classList.remove('drag')));
   box.addEventListener('drop', e=>{ e.preventDefault(); box.classList.remove('drag'); use(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]); });
 }
-function closeDetail(){document.getElementById('detailOverlay').classList.remove('show');}
+function closeDetail(){document.getElementById('detailOverlay').classList.remove('show'); try{ if(plNewAt==='detail') plNewAt = ''; }catch(e){} }
 
 // ---------- Dates: stored as YYYY-MM-DD, shown and typed as DD.MM.YYYY ----------
 const pad2 = n=>String(n).padStart(2,'0');
@@ -6538,6 +6573,84 @@ function createMap(el){
 }
 
 // ---- the Places module ----
+// ---- your own collections of places ("Pokémon shops", "Chongqing trip"…), plus type filter and sorting ----
+let placeLists = [];                        // [{id, name, emoji}] kept in meta/placeLists
+const plDist = new Map();                   // place id -> km, while sorted by nearest
+let plList = 'all', plType = 'all', plSort = 'new', plMe = null, plMeAsked = false, plLEdit = '', plNewAt = '';
+try{ plList = localStorage.getItem('places-list') || 'all'; plType = localStorage.getItem('places-type') || 'all'; plSort = localStorage.getItem('places-sort') || 'new'; }catch(e){}
+const PLACE_TYPES = [['shop','🛍️','Shops'], ['food','🍽️','Food & drink'], ['sight','🏛️','Sights'], ['nature','🌳','Nature'], ['stay','🏨','Hotels'], ['other','📍','Other']];
+const TYPE_EMOJI = {};
+[['shop','🛍️🛒🏪🏬📚🧸🎮👕👗👟👜💄💊📱💻🎁🧩🃏📦🏷️🪴💐👓⌚🎲🖊️🧵'], ['food','🍽️☕🍜🍕🍣🍰🍸🍺🍔🍟🌮🍩🍦🥐🍷🍵🧋🍱🥟🍗🥗🍝🍛🍲🥘🍤🥩🍳🥞🧁🍪🍫🍡🍢🥂🍹🍻🥃🍙🍚🥡🍮🧇🥨🌭🥙🍖🍞'],
+ ['sight','📸🏛️⛪🏰🎡🎭🎵🗼🗽🕌🛕⛩️🎨🖼️🏟️🎢🎠🏯🕍🎪🎬🎤🎧🎳🎮🛝⛲'], ['nature','⛰️🏖️🌳🏞️🌲🌴🌊🏝️🌸🌺🌻🦁🐼🐒🐠🌋🗻🏔️🌿'], ['stay','🏨🏩🛏️🏕️⛺🏡']]
+  .forEach(([k, list])=>{ for(const e of list.match(/\p{Extended_Pictographic}/gu) || []) if(!TYPE_EMOJI[e]) TYPE_EMOJI[e] = k; });
+const placeType = p=>{ const e = (placeEmoji(p).match(/\p{Extended_Pictographic}/u) || [''])[0]; return TYPE_EMOJI[e] || 'other'; };
+const listOf = id=>placeLists.find(l=>l.id===id);
+const placeListsOf = p=>(Array.isArray(p.lists) ? p.lists : []).filter(id=>listOf(id));
+const inListAndType = p=>(plList==='all' || placeListsOf(p).includes(plList)) && (plType==='all' || placeType(p)===plType);
+function setPlacePref(k, v){ try{ localStorage.setItem(k, v); }catch(e){} }
+function saveLists(list){ placeLists = list; return db.doc('meta/placeLists').set({list}); }
+// "🎮 Pokémon shops" -> emoji 🎮, name "Pokémon shops"
+function splitListName(t){
+  t = String(t || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+  const m = /^(\p{Extended_Pictographic}\uFE0F?(?:\u200D\p{Extended_Pictographic}\uFE0F?)*)\s*(.*)$/u.exec(t);
+  return m && m[2] ? {emoji: m[1], name: m[2]} : {emoji: '📁', name: t};
+}
+async function createList(text){
+  const {emoji, name} = splitListName(text); if(!name) return null;
+  const same = placeLists.find(l=>norm(l.name)===norm(name)); if(same) return same;
+  const l = {id: 'l' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name, emoji};
+  try{ await saveLists([...placeLists, l]); }catch(e){ toast("Couldn't save the collection. Try again."); return null; }
+  return l;
+}
+async function setPlaceLists(id, lists){
+  const p = places.find(x=>x.id===id); if(!p) return;
+  const before = Array.isArray(p.lists) ? p.lists.slice() : [];
+  p.lists = lists; renderPlaces(); refreshOpenDetail('places', id);
+  try{ await db.collection('places').doc(id).update({lists, updatedAt: new Date().toISOString()}); }
+  catch(e){ p.lists = before; renderPlaces(); refreshOpenDetail('places', id); toast("Couldn't update it. Try again."); }
+}
+function togglePlaceList(id, lid){
+  const p = places.find(x=>x.id===id); if(!p) return;
+  const cur = placeListsOf(p);
+  setPlaceLists(id, cur.includes(lid) ? cur.filter(x=>x!==lid) : [...cur, lid]);
+}
+// the small "new collection" box (in the list, the place form and the details)
+function newListBox(where){
+  return `<form class="pl-lnew" data-newlist="${where}"><input type="text" maxlength="40" placeholder="Name, e.g. 🎮 Pokémon shops" aria-label="New collection name"><button type="submit" class="go">Create</button><button type="button" data-cancel>Cancel</button></form>`;
+}
+function wireNewListBox(root, onMade){
+  const f = root.querySelector('form.pl-lnew'); if(!f) return;
+  const inp = f.querySelector('input'); setTimeout(()=>inp.focus(), 20);
+  f.onsubmit = async e=>{ e.preventDefault(); const t = inp.value.trim(); if(!t) return; const l = await createList(t); plNewAt = ''; if(l) onMade(l); else renderPlaces(); };
+  f.querySelector('[data-cancel]').onclick = ()=>{ plNewAt = ''; onMade(null); };
+  inp.addEventListener('keydown', e=>{ if(e.key==='Escape'){ e.stopPropagation(); plNewAt = ''; onMade(null); } });
+}
+function sortPlaces(list){
+  if(plSort==='az') return list.slice().sort((a, b)=>String(a.name || '').localeCompare(String(b.name || ''), undefined, {sensitivity: 'base'}));
+  if(plSort==='near'){
+    const o = plMe || (plMap ? (c=>({lat: c[0], lng: c[1]}))(plMap.center()) : null);
+    if(!o) return list;
+    plDist.clear();
+    return list.map(p=>({p, d: validLatLng(p.lat, p.lng) ? distKm(o.lat, o.lng, p.lat, p.lng) : 1e9})).sort((a, b)=>a.d - b.d).map(x=>{ plDist.set(x.p.id, x.d); return x.p; });
+  }
+  return list;                                // newest first (as they come)
+}
+function askWhereIAm(){
+  if(plMeAsked || !navigator.geolocation) return; plMeAsked = true;
+  navigator.geolocation.getCurrentPosition(pos=>{ plMe = {lat: pos.coords.latitude, lng: pos.coords.longitude}; if(currentMod==='places') renderPlaces(); }, ()=>{}, {enableHighAccuracy: false, timeout: 12000, maximumAge: 120000});
+}
+// put every place of the open collection (as filtered) on the route
+function addAllToRoute(){
+  const list = places.filter(placeShown).filter(p=>validLatLng(p.lat, p.lng));
+  let added = 0, full = false;
+  for(const p of list){
+    if(rt.stops.some(x=>x.placeId===p.id || sameSpot(x, p))) continue;
+    if(rt.stops.length >= 12){ full = true; break; }
+    rt.stops.push({k: p.id, placeId: p.id, name: p.name || 'Place', lat: +p.lat, lng: +p.lng, emoji: placeEmoji(p)}); added++;
+  }
+  saveRt(); stopsChanged();
+  toast(added ? `Added ${added} ${added===1 ? 'place' : 'places'} to your route${full ? ' (a route can have up to 12 stops)' : ''}. Tap 🧭 Route to plan it.` : full ? 'Your route is full (12 stops).' : 'They’re all on your route already.');
+}
 // a place's status: somewhere you want to go, somewhere you go regularly (your shop, pharmacy, gym…), or done
 const PLACE_STATUS = {want:'Want to go', regular:'⭐ Regular', been:'✓ Been there'};
 const stOf = p=>PLACE_STATUS[p && p.status] ? p.status : 'want';
@@ -6550,6 +6663,7 @@ function placeColor(p){ return NOTE_COLORS[p.color] ? p.color : 'red'; }
 function placeEmoji(p){ return (p.emoji || '📍').trim() || '📍'; }
 function validLatLng(lat, lng){ return typeof lat==='number' && typeof lng==='number' && isFinite(lat) && isFinite(lng) && Math.abs(lat)<=85.06 && Math.abs(lng)<=180; }
 function placeShown(p){
+  if(!inListAndType(p)) return false;
   if(plFilter!=='all' && stOf(p)!==plFilter) return false;
   if(!plQ) return true;
   const hay = norm([p.name, p.note, p.address].join(' '));
@@ -6851,9 +6965,10 @@ function renderPlaces(){
   // filters
   document.querySelectorAll('#plFilter button').forEach(b=>{
     const on = b.dataset.f===plFilter; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on?'true':'false');
-    const n = b.dataset.f==='all' ? places.length : places.filter(p=>stOf(p)===b.dataset.f).length;
+    const base = places.filter(inListAndType), n = b.dataset.f==='all' ? base.length : base.filter(p=>stOf(p)===b.dataset.f).length;
     b.querySelector('.n').textContent = n;
   });
+  renderListBar();
   // list
   const list = document.getElementById('plList');
   const ib = document.getElementById('plInboxBtn'), chip = document.getElementById('plInboxChip');
@@ -6867,15 +6982,63 @@ function renderPlaces(){
   if(plShowInbox) renderInbox(list);
   else if(!placesLoaded) list.innerHTML = '<div class="notes-empty">Loading…</div>';
   else if(!places.length) list.innerHTML = '<div class="notes-empty">No places yet. Tap <b>+ Add place</b>, then tap the map where it is or paste a Google Maps link.</div>';
-  else if(!shown.length) list.innerHTML = '<div class="notes-empty">No places match.</div>';
-  else list.innerHTML = shown.map(p=>`<button type="button" class="pl-row${p.id===plSel?' on':''}" data-id="${esc(p.id)}" style="--pc:var(--nc-${placeColor(p)})">
+  else if(!shown.length) list.innerHTML = plList!=='all' && !places.some(p=>placeListsOf(p).includes(plList))
+      ? '<div class="notes-empty">This collection is empty. Open a place (its card → <b>Details</b>) and tick this collection under <b>Collections</b>, or add a new place while this collection is open.</div>'
+      : '<div class="notes-empty">No places match.</div>';
+  else list.innerHTML = sortPlaces(shown).map(p=>`<button type="button" class="pl-row${p.id===plSel?' on':''}" data-id="${esc(p.id)}" style="--pc:var(--nc-${placeColor(p)})">
       <span class="pl-ico">${esc(placeEmoji(p))}</span>
       <span class="pl-txt"><b>${esc(p.name||'Untitled place')}</b>
-      <small>${p.review ? '<span class="pl-review">🎬 Check me</span> · ' : ''}${closedNote(p) ? '<span class="pl-gone">May have closed</span> · ' : ''}${stOf(p)==='want' ? 'Want to go' : `<span class="pl-been${stOf(p)==='regular' ? ' reg' : ''}">${PLACE_STATUS[stOf(p)]}</span>`}${p.note && p.note.trim() ? ' · ' + esc(p.note.replace(/\s+/g,' ').trim().slice(0,90)) : ''}</small></span></button>`).join('');
+      <small>${plSort==='near' && plDist.has(p.id) && plDist.get(p.id) < 1e8 ? `<span class="pl-dist">${fmtDist(plDist.get(p.id) * 1000)}</span> · ` : ''}${p.review ? '<span class="pl-review">🎬 Check me</span> · ' : ''}${closedNote(p) ? '<span class="pl-gone">May have closed</span> · ' : ''}${stOf(p)==='want' ? 'Want to go' : `<span class="pl-been${stOf(p)==='regular' ? ' reg' : ''}">${PLACE_STATUS[stOf(p)]}</span>`}${p.note && p.note.trim() ? ' · ' + esc(p.note.replace(/\s+/g,' ').trim().slice(0,90)) : ''}</small></span></button>`).join('');
   if(!plShowInbox) list.querySelectorAll('.pl-row').forEach(r=>r.onclick = ()=>{ selectPlace(r.dataset.id, {pan:true}); if(!isWide()) togglePlacesList(false); });
   document.getElementById('plListBtnN').textContent = shown.length;
   renderPlaceCard();
   renderPickBar();
+}
+function renderListBar(){
+  const row = document.getElementById('plLists'), head = document.getElementById('plLHead'), types = document.getElementById('plTypes');
+  if(!row) return;
+  const cnt = id=>places.filter(p=>placeListsOf(p).includes(id)).length;
+  row.innerHTML = `<button type="button" data-l="all" class="${plList==='all' ? 'on' : ''}">All places <span class="n">${places.length}</span></button>`
+    + placeLists.map(l=>`<button type="button" data-l="${esc(l.id)}" class="${plList===l.id ? 'on' : ''}">${esc(l.emoji)} ${esc(l.name)} <span class="n">${cnt(l.id)}</span></button>`).join('')
+    + `<button type="button" class="new" data-l="+">＋ New collection</button>`;
+  row.querySelectorAll('[data-l]').forEach(b=>b.onclick = ()=>{
+    if(b.dataset.l==='+'){ plNewAt = plNewAt==='side' ? '' : 'side'; plLEdit = ''; renderListBar(); return; }
+    plList = b.dataset.l; plType = 'all'; plLEdit = ''; plNewAt = ''; setPlacePref('places-list', plList); setPlacePref('places-type', 'all'); renderPlaces();
+  });
+  // the open collection: its name and what you can do with it (or the "new collection" box)
+  const L = listOf(plList);
+  head.hidden = !(L || plNewAt==='side');
+  if(plNewAt==='side'){ head.innerHTML = newListBox('side'); wireNewListBox(head, l=>{ if(l){ plList = l.id; setPlacePref('places-list', l.id); } renderPlaces(); }); }
+  else if(L && plLEdit===L.id){
+    head.innerHTML = `<form class="pl-lnew" style="flex:1"><input type="text" maxlength="40" value="${esc((L.emoji && L.emoji!=='📁' ? L.emoji + ' ' : '') + L.name)}" aria-label="Collection name"><button type="submit" class="go">Save</button><button type="button" data-cancel>Cancel</button></form>`;
+    const f = head.querySelector('form'), inp = f.querySelector('input'); setTimeout(()=>{ inp.focus(); inp.select(); }, 20);
+    f.onsubmit = async e=>{ e.preventDefault(); const {emoji, name} = splitListName(inp.value); plLEdit = '';
+      if(name){ try{ await saveLists(placeLists.map(x=>x.id===L.id ? {...x, name, emoji} : x)); }catch(e){ toast("Couldn't rename it. Try again."); } }
+      renderPlaces(); };
+    f.querySelector('[data-cancel]').onclick = ()=>{ plLEdit = ''; renderListBar(); };
+  }else if(L){
+    const n = cnt(L.id);
+    head.innerHTML = `<b>${esc(L.emoji)} ${esc(L.name)}</b>${n ? `<button type="button" data-a="route">🧭 Add all to route</button>` : ''}<button type="button" data-a="ren">Rename</button><button type="button" class="del" data-a="del">Delete</button>`;
+    const r = head.querySelector('[data-a=route]'); if(r) r.onclick = addAllToRoute;
+    head.querySelector('[data-a=ren]').onclick = ()=>{ plLEdit = L.id; renderListBar(); };
+    head.querySelector('[data-a=del]').onclick = async ()=>{
+      const before = placeLists.slice(), at = plList;
+      try{ await saveLists(placeLists.filter(x=>x.id!==L.id)); }catch(e){ toast("Couldn't delete it. Try again."); return; }
+      plList = 'all'; setPlacePref('places-list', 'all'); renderPlaces();
+      offerUndo(`Deleted the collection “${L.name}”. Your places are still saved.`, async ()=>{ await saveLists(before); plList = at; setPlacePref('places-list', at); renderPlaces(); });
+    };
+  }
+  // type chips (only the kinds you have here) + sorting
+  const base = places.filter(p=>plList==='all' || placeListsOf(p).includes(plList));
+  const kinds = PLACE_TYPES.map(([k, ico, label])=>({k, ico, label, n: base.filter(p=>placeType(p)===k).length})).filter(t=>t.n);
+  if(plType!=='all' && !kinds.some(t=>t.k===plType)) plType = 'all';
+  types.innerHTML = (kinds.length > 1 ? `<button type="button" data-t="all" class="${plType==='all' ? 'on' : ''}">All kinds</button>`
+      + kinds.map(t=>`<button type="button" data-t="${t.k}" class="${plType===t.k ? 'on' : ''}">${t.ico} ${t.label} <span class="n">${t.n}</span></button>`).join('') : '')
+    + `<select id="plSort" aria-label="Sort places"><option value="new">Newest first</option><option value="near">${plMe || plSort!=='near' ? 'Nearest to me' : 'Nearest (to the map)'}</option><option value="az">A–Z</option></select>`;
+  types.querySelectorAll('[data-t]').forEach(b=>b.onclick = ()=>{ plType = b.dataset.t; setPlacePref('places-type', plType); renderPlaces(); });
+  const sel = types.querySelector('#plSort'); sel.value = plSort;
+  sel.onchange = ()=>{ plSort = sel.value; setPlacePref('places-sort', plSort); if(plSort==='near') askWhereIAm(); renderPlaces(); };
+  if(plSort==='near') askWhereIAm();
 }
 function selectPlace(id, opts){
   plSel = id && places.some(p=>p.id===id) ? id : null;
@@ -7926,7 +8089,7 @@ async function movePlace(id, lat, lng){
 }
 
 // ---- the place form ----
-let plFormColor = 'red', plFormStatus = 'want';
+let plFormColor = 'red', plFormStatus = 'want', plFormLists = [];
 function openPlaceForm(id, pre){
   const p = id ? places.find(x=>x.id===id) : null;
   plEditId = p ? p.id : null;
@@ -7938,6 +8101,8 @@ function openPlaceForm(id, pre){
   document.getElementById('p_gmaps').value = p ? (p.gmapsUrl||'') : (pre.gmapsUrl||'');
   document.getElementById('p_emoji').value = p ? placeEmoji(p) : (pre.emoji || '📍');
   plFormColor = p ? placeColor(p) : 'red'; plFormStatus = p ? stOf(p) : 'want';
+  plFormLists = p ? placeListsOf(p) : (plList!=='all' && listOf(plList) ? [plList] : []);     // a new place joins the collection you have open
+  if(plNewAt==='form') plNewAt = '';
   document.getElementById('p_err').textContent = '';
   paintPlaceForm();
   closeDetail();
@@ -7949,10 +8114,21 @@ function paintPlaceForm(){
   document.querySelectorAll('#p_emojis button').forEach(b=>b.classList.toggle('on', b.dataset.e===cur));
   document.querySelectorAll('#p_colors .nc-sw').forEach(b=>{ const on = b.dataset.c===plFormColor; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on?'true':'false'); });
   document.querySelectorAll('#p_status button').forEach(b=>{ const on = b.dataset.s===plFormStatus; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on?'true':'false'); });
+  paintFormLists();
   const prev = document.getElementById('p_preview');
   prev.style.setProperty('--pc', `var(--nc-${plFormColor})`);
   prev.innerHTML = `<span class="pm-dot"><span class="pm-emo">${esc(cur || '📍')}</span></span>`;
   document.getElementById('p_loc').textContent = plDraft && validLatLng(plDraft.lat, plDraft.lng) ? (plDraft.address ? plDraft.address : `Location: ${plDraft.lat.toFixed(5)}, ${plDraft.lng.toFixed(5)}`) : '';
+}
+function paintFormLists(){
+  const box = document.getElementById('p_lists'); if(!box) return;
+  box.innerHTML = placeLists.map(l=>{ const on = plFormLists.includes(l.id); return `<button type="button" data-l="${esc(l.id)}" class="${on ? 'on' : ''}" aria-pressed="${on}">${on ? '✓ ' : ''}${esc(l.emoji)} ${esc(l.name)}</button>`; }).join('')
+    + (plNewAt==='form' ? newListBox('form') : `<button type="button" class="new" data-l="+">＋ New collection</button>`);
+  box.querySelectorAll('[data-l]').forEach(b=>b.onclick = ()=>{
+    if(b.dataset.l==='+'){ plNewAt = 'form'; paintFormLists(); return; }
+    const id = b.dataset.l; plFormLists = plFormLists.includes(id) ? plFormLists.filter(x=>x!==id) : [...plFormLists, id]; paintFormLists();
+  });
+  if(plNewAt==='form') wireNewListBox(box, l=>{ if(l && !plFormLists.includes(l.id)) plFormLists = [...plFormLists, l.id]; paintFormLists(); });
 }
 function closePlaceForm(){
   document.getElementById('placeOverlay').classList.remove('show');
@@ -7967,7 +8143,7 @@ async function savePlace(){
   const link = document.getElementById('p_link').value.trim(), g = document.getElementById('p_gmaps').value.trim();
   const data = {name, emoji:(document.getElementById('p_emoji').value.trim() || '📍').slice(0, 8), color:plFormColor, status:plFormStatus,
                 note:document.getElementById('p_note').value.trim(), link: link ? normalizeLink(link) : '', gmapsUrl: g ? normalizeLink(g) : '',
-                address:plDraft.address || '', lat:plDraft.lat, lng:plDraft.lng, updatedAt:new Date().toISOString()};
+                address:plDraft.address || '', lat:plDraft.lat, lng:plDraft.lng, lists: plFormLists.filter(id=>listOf(id)), updatedAt:new Date().toISOString()};
   const btn = document.querySelector('#placeOverlay .save'); btn.disabled = true;
   try{
     if(plEditId){
@@ -8024,6 +8200,7 @@ function openPlaceDetail(id){
     <div class="detail-meta"><div>Added<b>${p.createdAt ? fmtDate(String(p.createdAt).slice(0,10)) : '—'}</b></div>
       <div>${p.address ? 'Address' : 'Location'}<b style="font-variant-numeric:tabular-nums">${p.address ? esc(p.address) : validLatLng(p.lat,p.lng) ? `${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}` : '—'}</b></div></div>
     ${linkedNotesHTML('places', p.id)}
+    <div class="pd-st-row"><span>Collections</span><div class="pl-lpick" id="pdLists">${placeLists.map(l=>{ const on = placeListsOf(p).includes(l.id); return `<button type="button" class="${on ? 'on' : ''}" aria-pressed="${on}" onclick="togglePlaceList('${esc(p.id)}','${esc(l.id)}')">${on ? '✓ ' : ''}${esc(l.emoji)} ${esc(l.name)}</button>`; }).join('')}${plNewAt==='detail' ? newListBox('detail') : `<button type="button" class="new" onclick="plNewAt='detail'; openPlaceDetail('${esc(p.id)}')">＋ New collection</button>`}</div></div>
     <div class="pd-st-row"><span>Status</span><div class="p-status" role="group" aria-label="Status">${Object.entries(PLACE_STATUS).map(([k, l])=>`<button type="button" class="${k===st ? 'on' : ''}" aria-pressed="${k===st}" onclick="setPlaceStatus('${esc(p.id)}','${k}')">${l}</button>`).join('')}</div></div>
     <div class="actions">
       <button onclick="addStop({placeId:'${esc(p.id)}', name:${esc(JSON.stringify(p.name || 'Place'))}, lat:${+p.lat || 0}, lng:${+p.lng || 0}, emoji:${esc(JSON.stringify(placeEmoji(p)))}}); closeDetail();"${validLatLng(p.lat, p.lng) && !onRoute(p) ? '' : ' disabled'}>${onRoute(p) ? '🧭 On your route' : '➕ Add to route'}</button>
@@ -8034,6 +8211,7 @@ function openPlaceDetail(id){
       <button class="del" onclick="deletePlace('${esc(p.id)}')">Delete</button>
     </div>`;
   const ov = document.getElementById('detailOverlay'); ov.dataset.col='places'; ov.dataset.id=p.id; ov.classList.add('show');
+  if(plNewAt==='detail') wireNewListBox(document.getElementById('pdLists'), async l=>{ if(l){ const cur = placeListsOf(places.find(x=>x.id===p.id) || {}); await setPlaceLists(p.id, cur.includes(l.id) ? cur : [...cur, l.id]); } openPlaceDetail(p.id); });
   wireSiblings(document.getElementById('detailPanel'), p);
 }
 async function togglePlaceStatus(id){
