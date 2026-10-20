@@ -1349,6 +1349,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pl-txt b{display:block;font-family:Georgia,'Iowan Old Style',serif;font-size:0.97rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .pl-txt small{display:block;margin-top:2px;font-family:-apple-system,sans-serif;font-size:0.75rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .pl-been{color:var(--accent);font-weight:600;}
+  .pl-been.reg{color:#a87400;}
   .pl-mapwrap{position:relative;min-height:0;min-width:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#e8e4da;}
   #plMap{position:absolute;inset:0;}
   .pm-map{overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab;outline:none;}
@@ -1400,6 +1401,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pm-been{position:absolute;left:8px;top:-44px;width:16px;height:16px;border-radius:50%;background:#fff;color:#2f7a3e;border:1.5px solid #2f7a3e;
     font:700 10px/13px -apple-system,sans-serif;text-align:center;}
   .pm-pin.been .pm-dot{opacity:.8;}
+  .pm-been.pm-reg{color:#b07a00;border-color:#d9a400;font-size:10px;line-height:13px;}
   .pm-name{position:absolute;left:50%;top:2px;transform:translateX(-50%);white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;
     padding:1px 6px;border-radius:4px;background:rgba(255,255,255,.88);color:#222;font:600 11px/1.3 -apple-system,sans-serif;
     box-shadow:0 1px 3px rgba(0,0,0,.2);display:none;pointer-events:none;}
@@ -1562,6 +1564,8 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pd-pin{position:relative;width:40px;height:44px;flex:0 0 40px;}
   .pd-pin .pm-dot{left:3px;top:2px;}
   .pd-status{display:inline-block;padding:2px 9px;border-radius:999px;font-family:-apple-system,sans-serif;font-size:0.75rem;background:color-mix(in srgb, var(--ink) 8%, transparent);}
+  .pd-st-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:14px 0 4px;font-family:-apple-system,sans-serif;font-size:0.85rem;color:var(--muted);}
+  .pd-st-row .p-status button{padding:7px 11px;font-size:0.82rem;}
   .pd-status.been{background:color-mix(in srgb, var(--accent) 18%, transparent);color:var(--accent);font-weight:600;}
   .pd-maps{margin:14px 0 4px;}
   .pf-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;padding-right:30px;}
@@ -2054,7 +2058,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
     <div class="pl-side">
       <input type="search" id="plq" placeholder="Search your places" aria-label="Search your places">
       <div class="pl-filter" id="plFilter" role="group" aria-label="Show">
-        <button type="button" data-f="all">All <span class="n"></span></button><button type="button" data-f="want">Want to go <span class="n"></span></button><button type="button" data-f="been">Been there <span class="n"></span></button>
+        <button type="button" data-f="all">All <span class="n"></span></button><button type="button" data-f="want">Want to go <span class="n"></span></button><button type="button" data-f="regular">Regular <span class="n"></span></button><button type="button" data-f="been">Been there <span class="n"></span></button>
       </div>
       <button type="button" class="pl-inboxbtn" id="plInboxBtn" hidden></button>
       <div class="pl-list" id="plList"></div>
@@ -2394,7 +2398,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
       <div class="p-emojis" id="p_emojis"></div>
       <input id="p_emoji" class="p-emoji-in" type="text" maxlength="8" aria-label="Your own emoji" placeholder="or type any emoji">
       <div class="p-colors" id="p_colors"></div></div>
-    <div class="field"><label>Status</label><div class="p-status" id="p_status" role="group"><button type="button" data-s="want">Want to go</button><button type="button" data-s="been">✓ Been there</button></div></div>
+    <div class="field"><label>Status</label><div class="p-status" id="p_status" role="group"><button type="button" data-s="want">Want to go</button><button type="button" data-s="regular">⭐ Regular</button><button type="button" data-s="been">✓ Been there</button></div></div>
     <div class="field"><label for="p_note">Notes</label><textarea id="p_note" placeholder="What to order, best time to go, who recommended it…"></textarea></div>
     <div class="field"><label for="p_link">Where you found it <small>(TikTok, Instagram, website…)</small></label><input id="p_link" type="url" inputmode="url" placeholder="Paste the link"></div>
     <div class="field"><label for="p_gmaps">Google Maps link <small>(optional)</small></label><input id="p_gmaps" type="url" inputmode="url" placeholder="Opens exactly this place in Google Maps"></div>
@@ -3136,7 +3140,7 @@ function openGlobe(){
 function updateNavCounts(){
   const g = document.getElementById('navN_bucket'); if(g) g.textContent = goalsLoaded ? goals.filter(x=>!x.done).length : '';
   const n = document.getElementById('navN_notes'); if(n) n.textContent = notesLoaded ? notes.length : '';
-  const pl = document.getElementById('navN_places'); if(pl) pl.textContent = placesLoaded ? places.filter(p=>(p.status||'want')!=='been').length : '';
+  const pl = document.getElementById('navN_places'); if(pl) pl.textContent = placesLoaded ? places.filter(p=>stOf(p)==='want').length : '';
   syncPlacesHead();
   const a = document.getElementById('navN_inventory'), b = document.getElementById('navN_wishlist');
   if(a) a.textContent = itemsLoaded ? items.length : '';
@@ -6534,9 +6538,11 @@ function createMap(el){
 }
 
 // ---- the Places module ----
+// a place's status: somewhere you want to go, somewhere you go regularly (your shop, pharmacy, gym…), or done
+const PLACE_STATUS = {want:'Want to go', regular:'⭐ Regular', been:'✓ Been there'};
+const stOf = p=>PLACE_STATUS[p && p.status] ? p.status : 'want';
 let places = [], placesLoaded = false, plMap = null, plSel = null, plPick = null, plFilter = 'all', plQ = '', plEditId = null, plDraft = null, plListOpen = false, plFitted = false, plPoi = null, inbox = [], plShowInbox = false;   // plPoi: a place you tapped on the map itself (a café, a museum…)
 const PLACE_EMOJIS = ['📍','🍽️','☕','🍜','🍕','🍣','🍰','🍸','🍺','🏨','🛍️','📸','🏛️','⛪','🏰','⛰️','🏖️','🌳','🎡','🎭','🎵','🚉'];
-const PLACE_STATUS = {want:'Want to go', been:'Been there'};
 let plStyle = 'clean'; try{ plStyle = localStorage.getItem('places-style') || 'clean'; }catch(e){}
 try{ plFilter = localStorage.getItem('places-filter') || 'all'; }catch(e){}
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -6544,7 +6550,7 @@ function placeColor(p){ return NOTE_COLORS[p.color] ? p.color : 'red'; }
 function placeEmoji(p){ return (p.emoji || '📍').trim() || '📍'; }
 function validLatLng(lat, lng){ return typeof lat==='number' && typeof lng==='number' && isFinite(lat) && isFinite(lng) && Math.abs(lat)<=85.06 && Math.abs(lng)<=180; }
 function placeShown(p){
-  if(plFilter!=='all' && (p.status||'want')!==plFilter) return false;
+  if(plFilter!=='all' && stOf(p)!==plFilter) return false;
   if(!plQ) return true;
   const hay = norm([p.name, p.note, p.address].join(' '));
   return norm(plQ).split(/\s+/).filter(Boolean).every(w=>hay.includes(w));
@@ -6810,9 +6816,9 @@ function renderPlaces(){
   // pins
   plMap.setMarkers(shown.filter(p=>validLatLng(p.lat, p.lng)).map(p=>({
     id:p.id, lat:p.lat, lng:p.lng, label:p.name || 'Place',
-    cls:(p.id===plSel ? 'sel' : '') + ((p.status||'want')==='been' ? ' been' : '') + (closedNote(p) ? ' gone' : '') + (p.review ? ' review' : ''),
+    cls:(p.id===plSel ? 'sel' : '') + (stOf(p)==='been' ? ' been' : stOf(p)==='regular' ? ' regular' : '') + (closedNote(p) ? ' gone' : '') + (p.review ? ' review' : ''),
     pc:`var(--nc-${placeColor(p)})`,
-    html:`<span class="pm-dot"><span class="pm-emo">${esc(placeEmoji(p))}</span></span>${(p.status||'want')==='been' ? '<span class="pm-been" aria-hidden="true">✓</span>' : ''}<span class="pm-name">${esc(p.name||'')}</span>`,
+    html:`<span class="pm-dot"><span class="pm-emo">${esc(placeEmoji(p))}</span></span>${stOf(p)==='been' ? '<span class="pm-been" aria-hidden="true">✓</span>' : stOf(p)==='regular' ? '<span class="pm-been pm-reg" aria-hidden="true">★</span>' : ''}<span class="pm-name">${esc(p.name||'')}</span>`,
   })).concat(plPoi && !plPick && !plSel ? [{id:'__poi', lat:plPoi.lat, lng:plPoi.lng, cls:'temp poi', pc:'var(--accent)', html:`<span class="pm-dot"><span class="pm-emo">${esc(plPoi.emoji)}</span></span>`, label:plPoi.name}] : [])
      .concat(plPick && plPick.temp ? [{id:'__temp', lat:plPick.temp[0], lng:plPick.temp[1], cls:'temp', pc:'var(--accent)', html:'<span class="pm-dot"><span class="pm-emo">＋</span></span>', label:'New place'}] : []));
   if(!plFitted && placesLoaded && plMap.el.clientWidth){           // the first time: show all your places
@@ -6845,7 +6851,7 @@ function renderPlaces(){
   // filters
   document.querySelectorAll('#plFilter button').forEach(b=>{
     const on = b.dataset.f===plFilter; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on?'true':'false');
-    const n = b.dataset.f==='all' ? places.length : places.filter(p=>(p.status||'want')===b.dataset.f).length;
+    const n = b.dataset.f==='all' ? places.length : places.filter(p=>stOf(p)===b.dataset.f).length;
     b.querySelector('.n').textContent = n;
   });
   // list
@@ -6865,7 +6871,7 @@ function renderPlaces(){
   else list.innerHTML = shown.map(p=>`<button type="button" class="pl-row${p.id===plSel?' on':''}" data-id="${esc(p.id)}" style="--pc:var(--nc-${placeColor(p)})">
       <span class="pl-ico">${esc(placeEmoji(p))}</span>
       <span class="pl-txt"><b>${esc(p.name||'Untitled place')}</b>
-      <small>${p.review ? '<span class="pl-review">🎬 Check me</span> · ' : ''}${closedNote(p) ? '<span class="pl-gone">May have closed</span> · ' : ''}${(p.status||'want')==='been' ? '<span class="pl-been">✓ Been there</span>' : 'Want to go'}${p.note && p.note.trim() ? ' · ' + esc(p.note.replace(/\s+/g,' ').trim().slice(0,90)) : ''}</small></span></button>`).join('');
+      <small>${p.review ? '<span class="pl-review">🎬 Check me</span> · ' : ''}${closedNote(p) ? '<span class="pl-gone">May have closed</span> · ' : ''}${stOf(p)==='want' ? 'Want to go' : `<span class="pl-been${stOf(p)==='regular' ? ' reg' : ''}">${PLACE_STATUS[stOf(p)]}</span>`}${p.note && p.note.trim() ? ' · ' + esc(p.note.replace(/\s+/g,' ').trim().slice(0,90)) : ''}</small></span></button>`).join('');
   if(!plShowInbox) list.querySelectorAll('.pl-row').forEach(r=>r.onclick = ()=>{ selectPlace(r.dataset.id, {pan:true}); if(!isWide()) togglePlacesList(false); });
   document.getElementById('plListBtnN').textContent = shown.length;
   renderPlaceCard();
@@ -6888,7 +6894,7 @@ function renderPlaceCard(){
   card.style.setProperty('--pc', `var(--nc-${placeColor(p)})`);
   card.innerHTML = `<button type="button" class="pc-x" aria-label="Close" title="Close">×</button>
     <div class="pc-top"><span class="pl-ico">${esc(placeEmoji(p))}</span><div class="pc-t"><b>${esc(p.name||'Untitled place')}</b>
-    <small>${(p.status||'want')==='been' ? '✓ Been there' : 'Want to go'}${(()=>{ const st = p.info && hoursNow(parseHours(p.info.hours)); return st ? ` · <span class="pi-st ${st.open?'open':'closed'}">${esc(st.text)}</span>` : ''; })()}</small></div></div>
+    <small>${PLACE_STATUS[stOf(p)]}${(()=>{ const st = p.info && hoursNow(parseHours(p.info.hours)); return st ? ` · <span class="pi-st ${st.open?'open':'closed'}">${esc(st.text)}</span>` : ''; })()}</small></div></div>
     ${closedNote(p) ? `<div class="pc-warn">${esc(closedNote(p))}</div>` : ''}
     ${p.review ? `<div class="pc-review">Added from ${esc(socialName(p.link || ''))}. Is the pin in the right place? <button type="button" class="pc-btn" data-a="ok">✓ Looks right</button><button type="button" class="pc-btn" data-a="move">Move pin</button></div>` : ''}
     ${p.review ? fromVideoHTML(p, false) : ''}
@@ -7931,7 +7937,7 @@ function openPlaceForm(id, pre){
   document.getElementById('p_link').value = p ? (p.link||'') : (pre.link||'');
   document.getElementById('p_gmaps').value = p ? (p.gmapsUrl||'') : (pre.gmapsUrl||'');
   document.getElementById('p_emoji').value = p ? placeEmoji(p) : (pre.emoji || '📍');
-  plFormColor = p ? placeColor(p) : 'red'; plFormStatus = p ? (p.status||'want') : 'want';
+  plFormColor = p ? placeColor(p) : 'red'; plFormStatus = p ? stOf(p) : 'want';
   document.getElementById('p_err').textContent = '';
   paintPlaceForm();
   closeDetail();
@@ -7999,11 +8005,11 @@ function openPlaceDetail(id){
   const p = places.find(x=>x.id===id); if(!p) return;
   refreshPlace(id);
   const link = safeHref(p.link || '');
-  const been = (p.status||'want')==='been';
+  const st = stOf(p);
   document.getElementById('detailPanel').innerHTML = `
     <button class="close" onclick="closeDetail()">&times;</button>
     <div class="pd-head" style="--pc:var(--nc-${placeColor(p)})"><span class="pm-pin pd-pin"><span class="pm-dot"><span class="pm-emo">${esc(placeEmoji(p))}</span></span></span>
-      <div><h2>${esc(p.name||'Untitled place')}</h2><span class="pd-status${been?' been':''}">${been ? '✓ Been there' : 'Want to go'}</span></div></div>
+      <div><h2>${esc(p.name||'Untitled place')}</h2><span class="pd-status${st==='want' ? '' : ' been'}">${PLACE_STATUS[st]}</span></div></div>
     ${closedNote(p) ? `<div class="needs-box">${esc(closedNote(p))}${p.osmCheckedAt ? ` (checked ${esc(fmtDate(String(p.osmCheckedAt).slice(0,10)))})` : ''}.<button type="button" onclick="ignoreClosed('${esc(p.id)}')">It's still open</button></div>` : ''}
     ${p.review ? `<div class="pc-review">Added from ${esc(socialName(p.link || ''))}. Is the pin in the right place? <button type="button" class="pc-btn" onclick="reviewedPlace('${esc(p.id)}')">✓ Looks right</button></div>` : ''}
     ${fromVideoHTML(p, true)}
@@ -8018,8 +8024,9 @@ function openPlaceDetail(id){
     <div class="detail-meta"><div>Added<b>${p.createdAt ? fmtDate(String(p.createdAt).slice(0,10)) : '—'}</b></div>
       <div>${p.address ? 'Address' : 'Location'}<b style="font-variant-numeric:tabular-nums">${p.address ? esc(p.address) : validLatLng(p.lat,p.lng) ? `${p.lat.toFixed(5)}, ${p.lng.toFixed(5)}` : '—'}</b></div></div>
     ${linkedNotesHTML('places', p.id)}
+    <div class="pd-st-row"><span>Status</span><div class="p-status" role="group" aria-label="Status">${Object.entries(PLACE_STATUS).map(([k, l])=>`<button type="button" class="${k===st ? 'on' : ''}" aria-pressed="${k===st}" onclick="setPlaceStatus('${esc(p.id)}','${k}')">${l}</button>`).join('')}</div></div>
     <div class="actions">
-      <button class="buy" onclick="togglePlaceStatus('${esc(p.id)}')">${been ? 'Mark as want to go' : 'Mark as been there'}</button>
+      <button onclick="addStop({placeId:'${esc(p.id)}', name:${esc(JSON.stringify(p.name || 'Place'))}, lat:${+p.lat || 0}, lng:${+p.lng || 0}, emoji:${esc(JSON.stringify(placeEmoji(p)))}}); closeDetail();"${validLatLng(p.lat, p.lng) && !onRoute(p) ? '' : ' disabled'}>${onRoute(p) ? '🧭 On your route' : '➕ Add to route'}</button>
       <button onclick="openPlaceForm('${esc(p.id)}')">Edit</button>
     </div>
     <div class="actions" style="margin-top:8px">
@@ -8031,11 +8038,15 @@ function openPlaceDetail(id){
 }
 async function togglePlaceStatus(id){
   const p = places.find(x=>x.id===id); if(!p) return;
-  const before = snapshotDoc('places', id), status = (p.status||'want')==='been' ? 'want' : 'been';
+  setPlaceStatus(id, stOf(p)==='been' ? 'want' : 'been');
+}
+async function setPlaceStatus(id, status){
+  const p = places.find(x=>x.id===id); if(!p || !PLACE_STATUS[status] || stOf(p)===status) return;
+  const before = snapshotDoc('places', id);
   try{
     await db.collection('places').doc(id).update({status, updatedAt:new Date().toISOString()});
     p.status = status; renderPlaces(); refreshOpenDetail('places', id);
-    if(before) offerUndo(status==='been' ? `✓ “${p.name}” marked as been there.` : `“${p.name}” is back on your want-to-go list.`,
+    if(before) offerUndo(status==='been' ? `✓ “${p.name}” marked as been there.` : status==='regular' ? `⭐ “${p.name}” is now one of your regular places.` : `“${p.name}” is back on your want-to-go list.`,
       async ()=>{ await restoreDoc('places', id, before); renderPlaces(); refreshOpenDetail('places', id); });
   }catch(e){ toast("Couldn't update it. Try again."); }
 }
