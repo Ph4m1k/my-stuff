@@ -1332,7 +1332,43 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .places[hidden]{display:none !important;}
   .places{display:grid;grid-template-columns:300px 1fr;gap:20px;height:calc(100vh - 150px);min-height:440px;}
   .pl-side{display:flex;flex-direction:column;min-height:0;min-width:0;}
-  #plq{padding:10px 12px;border:1px solid var(--line);border-radius:3px;background:var(--card);color:var(--ink);font-family:-apple-system,sans-serif;font-size:0.9rem;margin-bottom:10px;}
+  #plq{flex:1;min-width:0;padding:9px 12px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);font-family:-apple-system,sans-serif;font-size:0.9rem;}
+  .pl-top{display:flex;gap:6px;margin-bottom:8px;}
+  .pl-fbtn{position:relative;display:inline-flex;align-items:center;gap:6px;padding:0 12px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);font-family:-apple-system,sans-serif;font-size:0.85rem;cursor:pointer;}
+  .pl-fbtn[aria-expanded="true"]{border-color:var(--accent);color:var(--accent);}
+  .pl-fn{min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:var(--paper);font-size:0.7rem;font-weight:700;line-height:18px;text-align:center;}
+  .pl-fn[hidden]{display:none;}
+  .pl-coll{position:relative;display:flex;align-items:center;gap:8px;margin-bottom:8px;font-family:-apple-system,sans-serif;}
+  .pl-cbtn{flex:1;min-width:0;display:flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);font-size:0.95rem;font-weight:600;cursor:pointer;text-align:left;}
+  .pl-cbtn .pl-cname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .pl-cbtn .pl-cn{color:var(--muted);font-weight:400;font-size:0.8rem;}
+  .pl-cbtn .pl-caret{color:var(--muted);font-size:0.75rem;}
+  .pl-croute{flex:0 0 auto;padding:9px 11px;border:1px solid var(--accent);border-radius:8px;background:var(--card);color:var(--accent);font-size:0.82rem;cursor:pointer;white-space:nowrap;}
+  .pl-cmenu{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;max-height:min(60vh, 420px);overflow-y:auto;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--card);box-shadow:0 10px 30px rgba(0,0,0,.25);}
+  .pl-cmenu button{display:flex;align-items:center;gap:8px;width:100%;padding:9px 10px;border:none;border-radius:6px;background:none;color:var(--ink);font:inherit;font-size:0.88rem;text-align:left;cursor:pointer;}
+  .pl-cmenu button:hover,.pl-cmenu button:focus-visible{background:color-mix(in srgb, var(--ink) 7%, transparent);}
+  .pl-cmenu button.on{font-weight:600;}
+  .pl-cmenu button .n{margin-left:auto;color:var(--muted);font-size:0.78rem;font-weight:400;}
+  .pl-cmenu button.on .n::before{content:'✓ ';color:var(--accent);}
+  .pl-cmenu hr{border:none;border-top:1px solid var(--line);margin:5px 4px;}
+  .pl-cmenu .sub{color:var(--muted);font-size:0.82rem;}
+  .pl-cmenu .del{color:#a13f3f;}
+  .pl-filters{padding:10px 12px 12px;margin-bottom:10px;border:1px solid var(--line);border-radius:8px;background:var(--card);font-family:-apple-system,sans-serif;}
+  .pl-filters[hidden]{display:none;}
+  .pl-flabel{margin:2px 0 6px;color:var(--muted);font-size:0.72rem;text-transform:uppercase;letter-spacing:.05em;}
+  .pl-flabel[hidden]{display:none;}
+  .pl-filters .pl-filter,.pl-filters .pl-types{margin:0 0 10px;}
+  .pl-sort{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;width:max-content;margin-bottom:12px;}
+  .pl-sort button{padding:6px 12px;border:none;background:var(--paper);color:var(--ink);font-size:0.8rem;cursor:pointer;}
+  .pl-sort button + button{border-left:1px solid var(--line);}
+  .pl-sort button.on{background:var(--accent);color:var(--paper);}
+  .pl-fdone{display:flex;justify-content:flex-end;gap:6px;}
+  .pl-fdone button{padding:6px 14px;border-radius:6px;border:1px solid var(--line);background:none;color:var(--ink);font-size:0.82rem;cursor:pointer;}
+  .pl-fdone button.go{background:var(--accent);border-color:var(--accent);color:var(--paper);}
+  .pl-active{display:flex;flex-wrap:wrap;gap:6px;margin:-2px 0 8px;font-family:-apple-system,sans-serif;}
+  .pl-active:empty{display:none;}
+  .pl-active button{display:inline-flex;align-items:center;gap:5px;padding:3px 6px 3px 10px;border-radius:999px;border:1px solid var(--accent);background:color-mix(in srgb, var(--accent) 12%, transparent);color:var(--ink);font-size:0.75rem;cursor:pointer;}
+  .pl-active button span{color:var(--muted);font-size:0.85rem;padding:0 3px;}
   .pl-filter{display:flex;gap:6px;margin-bottom:10px;font-family:-apple-system,sans-serif;flex-wrap:wrap;}
   .pl-lists{display:flex;gap:6px;margin:10px 0 8px;overflow-x:auto;scrollbar-width:thin;padding-bottom:2px;font-family:-apple-system,sans-serif;}
   .pl-lists button,.pl-lpick button{flex:0 0 auto;display:inline-flex;align-items:center;gap:5px;padding:6px 11px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-size:0.8rem;cursor:pointer;white-space:nowrap;}
@@ -1346,6 +1382,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pl-lhead{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:0 0 8px;font-family:-apple-system,sans-serif;font-size:0.8rem;color:var(--muted);}
   .pl-lhead b{color:var(--ink);font-size:0.9rem;margin-right:auto;}
   .pl-lhead[hidden]{display:none;}
+  .pl-lhead .pl-lnew{flex:1;margin:0;}
   .pl-lhead button{padding:4px 9px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-size:0.76rem;cursor:pointer;}
   .pl-lhead button.del{color:#a13f3f;}
   .pl-types{display:flex;align-items:center;gap:5px;margin:-2px 0 10px;flex-wrap:wrap;font-family:-apple-system,sans-serif;}
@@ -2081,13 +2118,22 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   </div>
   <div class="places" id="placesView" hidden>
     <div class="pl-side">
-      <input type="search" id="plq" placeholder="Search your places" aria-label="Search your places">
-      <div class="pl-lists" id="plLists" role="group" aria-label="Collections"></div>
+      <div class="pl-coll" id="plColl"></div>
       <div class="pl-lhead" id="plLHead" hidden></div>
-      <div class="pl-filter" id="plFilter" role="group" aria-label="Show">
+      <div class="pl-top"><input type="search" id="plq" placeholder="Search" aria-label="Search your places">
+        <button type="button" class="pl-fbtn" id="plFiltBtn" aria-expanded="false" aria-controls="plFilters"><svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M3 5h14M6 10h8M8.5 15h3"/></svg>Filter<span class="pl-fn" id="plFiltN" hidden></span></button></div>
+      <div class="pl-active" id="plActive"></div>
+      <div class="pl-filters" id="plFilters" hidden>
+      <div class="pl-flabel">Status</div>
+      <div class="pl-filter" id="plFilter" role="group" aria-label="Status">
         <button type="button" data-f="all">All <span class="n"></span></button><button type="button" data-f="want">Want to go <span class="n"></span></button><button type="button" data-f="regular">Regular <span class="n"></span></button><button type="button" data-f="been">Been there <span class="n"></span></button>
       </div>
+      <div class="pl-flabel" id="plTypesL">Kind</div>
       <div class="pl-types" id="plTypes"></div>
+      <div class="pl-flabel">Sort</div>
+      <div class="pl-sort" id="plSortRow" role="group" aria-label="Sort"><button type="button" data-s="new">Newest</button><button type="button" data-s="near">Nearest</button><button type="button" data-s="az">A–Z</button></div>
+      <div class="pl-fdone"><button type="button" id="plFiltReset">Reset</button><button type="button" class="go" id="plFiltDone">Done</button></div>
+      </div>
       <button type="button" class="pl-inboxbtn" id="plInboxBtn" hidden></button>
       <div class="pl-list" id="plList"></div>
       <div class="rt-panel" id="rtPanel" aria-label="Route planner"></div>
@@ -6576,7 +6622,7 @@ function createMap(el){
 // ---- your own collections of places ("Pokémon shops", "Chongqing trip"…), plus type filter and sorting ----
 let placeLists = [];                        // [{id, name, emoji}] kept in meta/placeLists
 const plDist = new Map();                   // place id -> km, while sorted by nearest
-let plList = 'all', plType = 'all', plSort = 'new', plMe = null, plMeAsked = false, plLEdit = '', plNewAt = '';
+let plList = 'all', plType = 'all', plSort = 'new', plMe = null, plMeAsked = false, plLEdit = '', plNewAt = '', plMenu = false, plFiltOpen = false;
 try{ plList = localStorage.getItem('places-list') || 'all'; plType = localStorage.getItem('places-type') || 'all'; plSort = localStorage.getItem('places-sort') || 'new'; }catch(e){}
 const PLACE_TYPES = [['shop','🛍️','Shops'], ['food','🍽️','Food & drink'], ['sight','🏛️','Sights'], ['nature','🌳','Nature'], ['stay','🏨','Hotels'], ['other','📍','Other']];
 const TYPE_EMOJI = {};
@@ -6995,49 +7041,67 @@ function renderPlaces(){
   renderPickBar();
 }
 function renderListBar(){
-  const row = document.getElementById('plLists'), head = document.getElementById('plLHead'), types = document.getElementById('plTypes');
-  if(!row) return;
+  const coll = document.getElementById('plColl'), head = document.getElementById('plLHead'), types = document.getElementById('plTypes');
+  if(!coll) return;
   const cnt = id=>places.filter(p=>placeListsOf(p).includes(id)).length;
-  row.innerHTML = `<button type="button" data-l="all" class="${plList==='all' ? 'on' : ''}">All places <span class="n">${places.length}</span></button>`
-    + placeLists.map(l=>`<button type="button" data-l="${esc(l.id)}" class="${plList===l.id ? 'on' : ''}">${esc(l.emoji)} ${esc(l.name)} <span class="n">${cnt(l.id)}</span></button>`).join('')
-    + `<button type="button" class="new" data-l="+">＋ New collection</button>`;
-  row.querySelectorAll('[data-l]').forEach(b=>b.onclick = ()=>{
-    if(b.dataset.l==='+'){ plNewAt = plNewAt==='side' ? '' : 'side'; plLEdit = ''; renderListBar(); return; }
-    plList = b.dataset.l; plType = 'all'; plLEdit = ''; plNewAt = ''; setPlacePref('places-list', plList); setPlacePref('places-type', 'all'); renderPlaces();
+  const L = listOf(plList), n = L ? cnt(L.id) : places.length;
+  // 1. which collection: one button that opens a menu (all places, your collections, new / rename / delete)
+  coll.innerHTML = `<button type="button" class="pl-cbtn" id="plCollBtn" aria-haspopup="menu" aria-expanded="${plMenu}"><span>${L ? esc(L.emoji) : '🗺️'}</span><span class="pl-cname">${L ? esc(L.name) : 'All places'}</span><span class="pl-cn">${n}</span><span class="pl-caret">▾</span></button>`
+    + (L && n ? `<button type="button" class="pl-croute" id="plAllRoute" title="Put all these places on your route">🧭 Route all</button>` : '')
+    + (plMenu ? `<div class="pl-cmenu" role="menu">
+        <button type="button" role="menuitem" data-l="all" class="${plList==='all' ? 'on' : ''}">🗺️ All places<span class="n">${places.length}</span></button>
+        ${placeLists.length ? '<hr>' : ''}${placeLists.map(l=>`<button type="button" role="menuitem" data-l="${esc(l.id)}" class="${plList===l.id ? 'on' : ''}">${esc(l.emoji)} ${esc(l.name)}<span class="n">${cnt(l.id)}</span></button>`).join('')}
+        <hr><button type="button" role="menuitem" class="sub" data-act="new">＋ New collection</button>
+        ${L ? `<button type="button" role="menuitem" class="sub" data-act="ren">✎ Rename “${esc(L.name)}”</button><button type="button" role="menuitem" class="sub del" data-act="del">🗑 Delete “${esc(L.name)}”</button>` : ''}
+      </div>` : '');
+  coll.querySelector('#plCollBtn').onclick = e=>{ e.stopPropagation(); plMenu = !plMenu; renderListBar(); if(plMenu){ const f = coll.querySelector('.pl-cmenu button.on') || coll.querySelector('.pl-cmenu button'); if(f) f.focus(); } };
+  const ar = coll.querySelector('#plAllRoute'); if(ar) ar.onclick = addAllToRoute;
+  coll.querySelectorAll('.pl-cmenu [data-l]').forEach(b=>b.onclick = ()=>{
+    plMenu = false; plList = b.dataset.l; plType = 'all'; plLEdit = ''; plNewAt = ''; setPlacePref('places-list', plList); setPlacePref('places-type', 'all'); renderPlaces();
   });
-  // the open collection: its name and what you can do with it (or the "new collection" box)
-  const L = listOf(plList);
-  head.hidden = !(L || plNewAt==='side');
+  const act = (a, fn)=>{ const b = coll.querySelector(`.pl-cmenu [data-act=${a}]`); if(b) b.onclick = ()=>{ plMenu = false; fn(); }; };
+  act('new', ()=>{ plNewAt = 'side'; plLEdit = ''; renderListBar(); });
+  act('ren', ()=>{ plLEdit = L.id; plNewAt = ''; renderListBar(); });
+  act('del', async ()=>{
+    const before = placeLists.slice(), at = plList;
+    try{ await saveLists(placeLists.filter(x=>x.id!==L.id)); }catch(e){ toast("Couldn't delete it. Try again."); renderListBar(); return; }
+    plList = 'all'; setPlacePref('places-list', 'all'); renderPlaces();
+    offerUndo(`Deleted the collection “${L.name}”. Your places are still saved.`, async ()=>{ await saveLists(before); plList = at; setPlacePref('places-list', at); renderPlaces(); });
+  });
+  // 2. the small form under it: a new collection, or renaming this one
+  head.hidden = !(plNewAt==='side' || (L && plLEdit===L.id));
   if(plNewAt==='side'){ head.innerHTML = newListBox('side'); wireNewListBox(head, l=>{ if(l){ plList = l.id; setPlacePref('places-list', l.id); } renderPlaces(); }); }
   else if(L && plLEdit===L.id){
-    head.innerHTML = `<form class="pl-lnew" style="flex:1"><input type="text" maxlength="40" value="${esc((L.emoji && L.emoji!=='📁' ? L.emoji + ' ' : '') + L.name)}" aria-label="Collection name"><button type="submit" class="go">Save</button><button type="button" data-cancel>Cancel</button></form>`;
+    head.innerHTML = `<form class="pl-lnew"><input type="text" maxlength="40" value="${esc((L.emoji && L.emoji!=='📁' ? L.emoji + ' ' : '') + L.name)}" aria-label="Collection name"><button type="submit" class="go">Save</button><button type="button" data-cancel>Cancel</button></form>`;
     const f = head.querySelector('form'), inp = f.querySelector('input'); setTimeout(()=>{ inp.focus(); inp.select(); }, 20);
     f.onsubmit = async e=>{ e.preventDefault(); const {emoji, name} = splitListName(inp.value); plLEdit = '';
       if(name){ try{ await saveLists(placeLists.map(x=>x.id===L.id ? {...x, name, emoji} : x)); }catch(e){ toast("Couldn't rename it. Try again."); } }
       renderPlaces(); };
     f.querySelector('[data-cancel]').onclick = ()=>{ plLEdit = ''; renderListBar(); };
-  }else if(L){
-    const n = cnt(L.id);
-    head.innerHTML = `<b>${esc(L.emoji)} ${esc(L.name)}</b>${n ? `<button type="button" data-a="route">🧭 Add all to route</button>` : ''}<button type="button" data-a="ren">Rename</button><button type="button" class="del" data-a="del">Delete</button>`;
-    const r = head.querySelector('[data-a=route]'); if(r) r.onclick = addAllToRoute;
-    head.querySelector('[data-a=ren]').onclick = ()=>{ plLEdit = L.id; renderListBar(); };
-    head.querySelector('[data-a=del]').onclick = async ()=>{
-      const before = placeLists.slice(), at = plList;
-      try{ await saveLists(placeLists.filter(x=>x.id!==L.id)); }catch(e){ toast("Couldn't delete it. Try again."); return; }
-      plList = 'all'; setPlacePref('places-list', 'all'); renderPlaces();
-      offerUndo(`Deleted the collection “${L.name}”. Your places are still saved.`, async ()=>{ await saveLists(before); plList = at; setPlacePref('places-list', at); renderPlaces(); });
-    };
-  }
-  // type chips (only the kinds you have here) + sorting
+  }else head.innerHTML = '';
+  // 3. filters: kinds you have here, sorting; folded away behind the Filter button
   const base = places.filter(p=>plList==='all' || placeListsOf(p).includes(plList));
   const kinds = PLACE_TYPES.map(([k, ico, label])=>({k, ico, label, n: base.filter(p=>placeType(p)===k).length})).filter(t=>t.n);
   if(plType!=='all' && !kinds.some(t=>t.k===plType)) plType = 'all';
-  types.innerHTML = (kinds.length > 1 ? `<button type="button" data-t="all" class="${plType==='all' ? 'on' : ''}">All kinds</button>`
-      + kinds.map(t=>`<button type="button" data-t="${t.k}" class="${plType===t.k ? 'on' : ''}">${t.ico} ${t.label} <span class="n">${t.n}</span></button>`).join('') : '')
-    + `<select id="plSort" aria-label="Sort places"><option value="new">Newest first</option><option value="near">${plMe || plSort!=='near' ? 'Nearest to me' : 'Nearest (to the map)'}</option><option value="az">A–Z</option></select>`;
+  types.innerHTML = kinds.length > 1 ? `<div class="pl-filter"><button type="button" data-t="all" class="${plType==='all' ? 'on' : ''}">All kinds</button>`
+      + kinds.map(t=>`<button type="button" data-t="${t.k}" class="${plType===t.k ? 'on' : ''}">${t.ico} ${t.label} <span class="n">${t.n}</span></button>`).join('') + '</div>' : '';
+  document.getElementById('plTypesL').hidden = kinds.length <= 1;
   types.querySelectorAll('[data-t]').forEach(b=>b.onclick = ()=>{ plType = b.dataset.t; setPlacePref('places-type', plType); renderPlaces(); });
-  const sel = types.querySelector('#plSort'); sel.value = plSort;
-  sel.onchange = ()=>{ plSort = sel.value; setPlacePref('places-sort', plSort); if(plSort==='near') askWhereIAm(); renderPlaces(); };
+  document.querySelectorAll('#plSortRow [data-s]').forEach(b=>{ b.classList.toggle('on', b.dataset.s===plSort); b.setAttribute('aria-pressed', b.dataset.s===plSort ? 'true' : 'false'); });
+  const box = document.getElementById('plFilters'); box.hidden = !plFiltOpen;
+  const fb = document.getElementById('plFiltBtn'); fb.setAttribute('aria-expanded', plFiltOpen ? 'true' : 'false');
+  const active = [];
+  if(plFilter!=='all') active.push(['status', PLACE_STATUS[plFilter] || plFilter]);
+  if(plType!=='all'){ const t = PLACE_TYPES.find(x=>x[0]===plType); if(t) active.push(['type', `${t[1]} ${t[2]}`]); }
+  if(plSort!=='new') active.push(['sort', plSort==='near' ? (plMe ? '↕ Nearest to me' : '↕ Nearest (to the map)') : '↕ A–Z']);
+  const nf = document.getElementById('plFiltN'); nf.hidden = !active.length; nf.textContent = active.length;
+  // what's switched on, as small chips you can clear (shown while the panel is folded)
+  const ac = document.getElementById('plActive');
+  ac.innerHTML = plFiltOpen ? '' : active.map(([k, l])=>`<button type="button" data-clear="${k}" aria-label="Clear ${esc(l)}">${esc(l)}<span aria-hidden="true">✕</span></button>`).join('');
+  ac.querySelectorAll('[data-clear]').forEach(b=>b.onclick = ()=>{
+    const k = b.dataset.clear;
+    if(k==='status') setPlaceFilter('all'); else if(k==='type'){ plType = 'all'; setPlacePref('places-type', 'all'); renderPlaces(); } else { plSort = 'new'; setPlacePref('places-sort', 'new'); renderPlaces(); }
+  });
   if(plSort==='near') askWhereIAm();
 }
 function selectPlace(id, opts){
@@ -8248,6 +8312,13 @@ function setupPlaces(){
   document.addEventListener('keydown', e=>{ if(e.key==='Escape'){ const pop = document.getElementById('plUpdPop'); if(!pop.hidden){ pop.hidden = true; e.stopPropagation(); } } }, true);
   document.getElementById('plFit').onclick = ()=>{ const pts = places.filter(placeShown).filter(p=>validLatLng(p.lat,p.lng)).map(p=>[p.lat,p.lng]); if(pts.length) plMap.fit(pts); };
   document.getElementById('plListBtn').onclick = ()=>togglePlacesList();
+  document.getElementById('plFiltBtn').onclick = ()=>{ plFiltOpen = !plFiltOpen; plMenu = false; renderListBar(); };
+  document.getElementById('plFiltDone').onclick = ()=>{ plFiltOpen = false; renderListBar(); };
+  document.getElementById('plFiltReset').onclick = ()=>{ plType = 'all'; plSort = 'new'; setPlacePref('places-type', 'all'); setPlacePref('places-sort', 'new'); setPlaceFilter('all'); };
+  document.querySelectorAll('#plSortRow [data-s]').forEach(b=>b.onclick = ()=>{ plSort = b.dataset.s; setPlacePref('places-sort', plSort); if(plSort==='near') askWhereIAm(); renderPlaces(); });
+  // the collection menu closes when you tap anywhere else, or press Escape
+  document.addEventListener('pointerdown', e=>{ if(plMenu && !e.target.closest('#plColl')){ plMenu = false; renderListBar(); } });
+  document.addEventListener('keydown', e=>{ if(e.key==='Escape' && plMenu){ plMenu = false; renderListBar(); const b = document.getElementById('plCollBtn'); if(b) b.focus(); e.stopPropagation(); } }, true);
   // form pieces
   document.getElementById('p_emojis').innerHTML = PLACE_EMOJIS.map(e=>`<button type="button" data-e="${e}" aria-label="${e}">${e}</button>`).join('');
   document.getElementById('p_emojis').onclick = e=>{ const b = e.target.closest('button'); if(!b) return; document.getElementById('p_emoji').value = b.dataset.e; paintPlaceForm(); };
