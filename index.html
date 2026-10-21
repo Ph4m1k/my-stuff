@@ -807,10 +807,12 @@ HOST.reverseAddress = async (lat, lng)=>{
     const j = await r.json(), f = (j.features || [])[0];
     const pr = (f && f.properties) || {};
     const near = f && f.geometry && f.geometry.coordinates ? distKm(+lat, +lng, +f.geometry.coordinates[1], +f.geometry.coordinates[0]) : 99;
-    if(near > 0.3) return '';                             // nothing close enough to call it this place's address
-    const street = [pr.street || (pr.osm_key === 'highway' ? pr.name : ''), pr.housenumber].filter(Boolean).join(' ');
-    const town = pr.district && pr.city && pr.district.startsWith(pr.city) ? pr.district                     // "Praha 7"
-      : pr.district && pr.city && pr.district !== pr.city ? `${pr.city} – ${pr.district}` : (pr.city || pr.locality || pr.county || '');
+    if(near > 3) return '';
+    // the part of town: "Praha 7" on its own, "Prague – New Town", or just the city
+    const d = pr.district || '', city = pr.city || pr.locality || pr.county || '';
+    const town = d && /\d/.test(d) ? d : d && city && d !== city ? `${city} – ${d}` : (city || d);
+    // the street only when the nearest thing really is at this spot; otherwise just the part of town
+    const street = near <= 0.3 ? [pr.street || (pr.osm_key === 'highway' ? pr.name : ''), pr.housenumber].filter(Boolean).join(' ') : '';
     return [street, town].filter(Boolean).join(', ').slice(0, 140);
   }catch(e){ return ''; }
   finally{ clearTimeout(t); }
@@ -7062,12 +7064,13 @@ function renderPlaces(){
 }
 // a place's address for the list: what you saved, or the street from OpenStreetMap
 function placeAddr(p){
-  const a = String(p.address || '').trim(); if(a) return a;
+  const a = String(p.address || '').trim().replace(/, [^,–]+ – ([^,]*\d[^,]*)$/, ', $1');   // "…, Prague – Praha 7" -> "…, Praha 7"
+  if(a) return a;
   const i = p.info || {}; return [i.street, i.city].filter(Boolean).join(', ');
 }
 // places without an address get one looked up from their pin (app version only; one at a time, gently)
 const addrTried = new Set(); let addrBusy = false;
-let addrMiss = {}; try{ addrMiss = JSON.parse(localStorage.getItem('addr-miss') || '{}') || {}; }catch(e){}   // spots with no address nearby: don't ask again for a week
+let addrMiss = {}; try{ addrMiss = JSON.parse(localStorage.getItem('addr-miss2') || '{}') || {}; }catch(e){}   // spots with no address nearby: don't ask again for a week
 async function fillAddresses(){
   if(addrBusy || !(HOST && HOST.reverseAddress) || !placesLoaded) return;
   addrBusy = true;
@@ -7082,7 +7085,7 @@ async function fillAddresses(){
         p.address = a;
         try{ await db.collection('places').doc(p.id).update({address: a}); }catch(e){}
         if(currentMod==='places') renderPlaces();
-      }else if(!a){ addrMiss[p.id] = Date.now(); try{ localStorage.setItem('addr-miss', JSON.stringify(addrMiss)); }catch(e){} }
+      }else if(!a){ addrMiss[p.id] = Date.now(); try{ localStorage.setItem('addr-miss2', JSON.stringify(addrMiss)); }catch(e){} }
       await new Promise(r=>setTimeout(r, 800));
     }
   }finally{ addrBusy = false; }
