@@ -1727,6 +1727,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-sum{padding:8px 10px;border-radius:6px;background:color-mix(in srgb, var(--accent) 10%, transparent);font-size:0.84rem;}
   .rt-sum small{display:block;color:var(--muted);font-size:0.74rem;margin-top:3px;}
   .rt-acts{display:flex;flex-wrap:wrap;gap:6px;}
+  .rt-gmnote{flex-basis:100%;color:var(--muted);font-size:0.74rem;line-height:1.4;}
   .rt-go{display:flex;flex-direction:column;gap:4px;}
   .rt-go .pc-btn{width:100%;justify-content:center;padding:10px 12px;font-size:0.92rem;}
   .rt-go .pc-btn:disabled{opacity:.5;cursor:default;}
@@ -7691,6 +7692,21 @@ function fitRoute(){
 }
 const fmtDur = s=>{ const m = Math.max(1, Math.round(s / 60)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}`; };
 const fmtDist = m=>m < 950 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(m < 9500 ? 1 : 0).replace('.', ',')} km`;
+// the planned route in Google Maps. Walking: the whole route with its stops, in the quickest order
+// (Google Maps takes up to 10 points per link, so a long route opens in parts). Public transport: Google Maps
+// can't do several stops at once, so the next step opens; after each shop, ✓ Done here, then this button again.
+function gmRouteButtons(start, ordered, mode){
+  const ll = p=>`${(+p.lat).toFixed(6)},${(+p.lng).toFixed(6)}`;
+  if(mode!=='walk') return `<a class="pc-btn pc-main" target="_blank" rel="noopener noreferrer" href="${esc(gmDir(start, ordered[0], 'transit'))}">${GMAPS_SVG}Next step in Google Maps</a>
+    <small class="rt-gmnote">Google Maps can’t plan public transport with several stops at once, so it opens one step at a time: after each shop, tap <b>✓ Done here</b>, then this button again.</small>`;
+  const parts = [], pts = [start, ...ordered];
+  for(let i = 0; i < pts.length - 1; i += 9) parts.push(pts.slice(i, i + 10));      // 10 points per part, each part starts where the last ended
+  return parts.map((pp, k)=>{
+    const o = pp[0], d = pp[pp.length - 1], w = pp.slice(1, -1);
+    const href = `https://www.google.com/maps/dir/?api=1&origin=${ll(o)}&destination=${ll(d)}${w.length ? `&waypoints=${w.map(ll).join('|')}` : ''}&travelmode=walking`;
+    return `<a class="pc-btn${k ? '' : ' pc-main'}" target="_blank" rel="noopener noreferrer" href="${esc(href)}">${GMAPS_SVG}${parts.length > 1 ? `Google Maps, part ${k + 1} of ${parts.length}` : 'Open the route in Google Maps'}</a>`;
+  }).join('');
+}
 const gmDir = (a, b, mode)=>`https://www.google.com/maps/dir/?api=1&origin=${a.lat.toFixed(6)},${a.lng.toFixed(6)}&destination=${b.lat.toFixed(6)},${b.lng.toFixed(6)}&travelmode=${mode==='walk' ? 'walking' : 'transit'}`;
 // ---- searching for a stop: your own places first, then anything on the map ----
 let rtSearchCtl = null;
@@ -7816,7 +7832,7 @@ function renderRoute(){
       : rt.busy ? '<div class="rt-sum"><span class="busy-spin" aria-hidden="true"></span>Working out the quickest order…</div>'
       : rt.stops.length && !rt.asked ? `<div class="rt-go"><button type="button" class="pc-btn pc-main" id="rtPlan"${rt.start ? '' : ' disabled'}>🧭 Plan my route${rt.stops.length > 1 ? ` · ${rt.stops.length} stops` : ''}</button><small>${rt.start ? 'Add all your stops first, then press this to get the quickest order.' : 'Set where you start (above) first.'}</small></div>`
       : rt.stops.length && !rt.start ? '<div class="rt-sum">Set where you start (above), and I’ll work out the order.</div>' : ''}
-    ${rt.stops.length ? `<div class="rt-acts">${res && rt.mode==='walk' && rt.start ? `<a class="pc-btn pc-main" target="_blank" rel="noopener noreferrer" href="${esc(`https://www.google.com/maps/dir/?api=1&origin=${rt.start.lat.toFixed(6)},${rt.start.lng.toFixed(6)}&destination=${ordered[ordered.length - 1].lat.toFixed(6)},${ordered[ordered.length - 1].lng.toFixed(6)}${ordered.length > 1 ? `&waypoints=${ordered.slice(0, -1).map(s=>`${s.lat.toFixed(6)},${s.lng.toFixed(6)}`).join('|')}` : ''}&travelmode=walking`)}">${GMAPS_SVG}Open the whole route</a>` : ''}
+    ${rt.stops.length ? `<div class="rt-acts">${res && rt.start ? gmRouteButtons(rt.start, ordered, rt.mode) : ''}
       <button type="button" class="pc-btn" id="rtClear">Clear route</button></div>` : ''}`;
   // wiring
   box.querySelector('#rtMin').onclick = ()=>{ rt.mini = !rt.mini; renderRoute(); };
