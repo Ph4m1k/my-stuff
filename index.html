@@ -798,6 +798,23 @@ async function searchPhoton(text, lat, lng, signal){
     };
   }).filter(Boolean);
 }
+// the street address of a spot on the map (for places saved without one): Photon, from OpenStreetMap
+HOST.reverseAddress = async (lat, lng)=>{
+  const c = new AbortController(), t = setTimeout(()=>c.abort(), 8000);
+  try{
+    const r = await fetch(`https://photon.komoot.io/reverse?lat=${(+lat).toFixed(6)}&lon=${(+lng).toFixed(6)}&limit=1`, { signal: c.signal });
+    if(!r.ok) return '';
+    const j = await r.json(), f = (j.features || [])[0];
+    const pr = (f && f.properties) || {};
+    const near = f && f.geometry && f.geometry.coordinates ? distKm(+lat, +lng, +f.geometry.coordinates[1], +f.geometry.coordinates[0]) : 99;
+    if(near > 0.3) return '';                             // nothing close enough to call it this place's address
+    const street = [pr.street || (pr.osm_key === 'highway' ? pr.name : ''), pr.housenumber].filter(Boolean).join(' ');
+    const town = pr.district && pr.city && pr.district.startsWith(pr.city) ? pr.district                     // "Praha 7"
+      : pr.district && pr.city && pr.district !== pr.city ? `${pr.city} – ${pr.district}` : (pr.city || pr.locality || pr.county || '');
+    return [street, town].filter(Boolean).join(', ').slice(0, 140);
+  }catch(e){ return ''; }
+  finally{ clearTimeout(t); }
+};
 // results arrive bit by bit (onPart gets each search's answer as soon as it's in), and are remembered for a while
 const searchCache = new Map();
 HOST.searchPlaces = async (text, lat, lng, signal, onPart)=>{
@@ -1392,6 +1409,8 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pl-types button.on .n{color:inherit;opacity:.75;}
   .pl-types select{margin-left:auto;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);font:inherit;font-size:0.76rem;}
   .pl-dist{font-variant-numeric:tabular-nums;font-weight:600;color:var(--ink);}
+  .pc-addr{margin-top:6px;color:var(--muted);font-family:-apple-system,sans-serif;font-size:0.8rem;}
+  .pl-addr{display:block;margin-top:1px;color:var(--muted);font-size:0.74rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .pl-lpick{display:flex;flex-wrap:wrap;gap:6px;font-family:-apple-system,sans-serif;}
   .pl-lpick button.on{border-color:var(--accent);background:var(--accent);color:var(--paper);}
   .pl-lpick .pl-lnew{flex-basis:100%;margin:2px 0 0;}
@@ -7015,6 +7034,7 @@ function renderPlaces(){
     b.querySelector('.n').textContent = n;
   });
   renderListBar();
+  if(placesLoaded) setTimeout(fillAddresses, 1500);
   // list
   const list = document.getElementById('plList');
   const ib = document.getElementById('plInboxBtn'), chip = document.getElementById('plInboxChip');
@@ -7034,11 +7054,38 @@ function renderPlaces(){
   else list.innerHTML = sortPlaces(shown).map(p=>`<button type="button" class="pl-row${p.id===plSel?' on':''}" data-id="${esc(p.id)}" style="--pc:var(--nc-${placeColor(p)})">
       <span class="pl-ico">${esc(placeEmoji(p))}</span>
       <span class="pl-txt"><b>${esc(p.name||'Untitled place')}</b>
-      <small>${plSort==='near' && plDist.has(p.id) && plDist.get(p.id) < 1e8 ? `<span class="pl-dist">${fmtDist(plDist.get(p.id) * 1000)}</span> · ` : ''}${p.review ? '<span class="pl-review">🎬 Check me</span> · ' : ''}${closedNote(p) ? '<span class="pl-gone">May have closed</span> · ' : ''}${stOf(p)==='want' ? 'Want to go' : `<span class="pl-been${stOf(p)==='regular' ? ' reg' : ''}">${PLACE_STATUS[stOf(p)]}</span>`}${p.note && p.note.trim() ? ' · ' + esc(p.note.replace(/\s+/g,' ').trim().slice(0,90)) : ''}</small></span></button>`).join('');
+      <small>${plSort==='near' && plDist.has(p.id) && plDist.get(p.id) < 1e8 ? `<span class="pl-dist">${fmtDist(plDist.get(p.id) * 1000)}</span> · ` : ''}${p.review ? '<span class="pl-review">🎬 Check me</span> · ' : ''}${closedNote(p) ? '<span class="pl-gone">May have closed</span> · ' : ''}${stOf(p)==='want' ? 'Want to go' : `<span class="pl-been${stOf(p)==='regular' ? ' reg' : ''}">${PLACE_STATUS[stOf(p)]}</span>`}${p.note && p.note.trim() ? ' · ' + esc(p.note.replace(/\s+/g,' ').trim().slice(0,90)) : ''}</small>${placeAddr(p) ? `<small class="pl-addr">${esc(placeAddr(p))}</small>` : ''}</span></button>`).join('');
   if(!plShowInbox) list.querySelectorAll('.pl-row').forEach(r=>r.onclick = ()=>{ selectPlace(r.dataset.id, {pan:true}); if(!isWide()) togglePlacesList(false); });
   document.getElementById('plListBtnN').textContent = shown.length;
   renderPlaceCard();
   renderPickBar();
+}
+// a place's address for the list: what you saved, or the street from OpenStreetMap
+function placeAddr(p){
+  const a = String(p.address || '').trim(); if(a) return a;
+  const i = p.info || {}; return [i.street, i.city].filter(Boolean).join(', ');
+}
+// places without an address get one looked up from their pin (app version only; one at a time, gently)
+const addrTried = new Set(); let addrBusy = false;
+let addrMiss = {}; try{ addrMiss = JSON.parse(localStorage.getItem('addr-miss') || '{}') || {}; }catch(e){}   // spots with no address nearby: don't ask again for a week
+async function fillAddresses(){
+  if(addrBusy || !(HOST && HOST.reverseAddress) || !placesLoaded) return;
+  addrBusy = true;
+  try{
+    for(let k = 0; k < 40; k++){
+      const p = places.find(x=>!placeAddr(x) && validLatLng(x.lat, x.lng) && !addrTried.has(x.id) && !(addrMiss[x.id] > Date.now() - 7 * 864e5));
+      if(!p) break;
+      addrTried.add(p.id);
+      let a = '';
+      try{ a = await HOST.reverseAddress(p.lat, p.lng); }catch(e){}
+      if(a && !placeAddr(p) && places.includes(p)){
+        p.address = a;
+        try{ await db.collection('places').doc(p.id).update({address: a}); }catch(e){}
+        if(currentMod==='places') renderPlaces();
+      }else if(!a){ addrMiss[p.id] = Date.now(); try{ localStorage.setItem('addr-miss', JSON.stringify(addrMiss)); }catch(e){} }
+      await new Promise(r=>setTimeout(r, 800));
+    }
+  }finally{ addrBusy = false; }
 }
 function renderListBar(){
   const coll = document.getElementById('plColl'), head = document.getElementById('plLHead'), types = document.getElementById('plTypes');
@@ -7122,6 +7169,7 @@ function renderPlaceCard(){
   card.innerHTML = `<button type="button" class="pc-x" aria-label="Close" title="Close">×</button>
     <div class="pc-top"><span class="pl-ico">${esc(placeEmoji(p))}</span><div class="pc-t"><b>${esc(p.name||'Untitled place')}</b>
     <small>${PLACE_STATUS[stOf(p)]}${(()=>{ const st = p.info && hoursNow(parseHours(p.info.hours)); return st ? ` · <span class="pi-st ${st.open?'open':'closed'}">${esc(st.text)}</span>` : ''; })()}</small></div></div>
+    ${placeAddr(p) ? `<div class="pc-addr">📍 ${esc(placeAddr(p))}</div>` : ''}
     ${closedNote(p) ? `<div class="pc-warn">${esc(closedNote(p))}</div>` : ''}
     ${p.review ? `<div class="pc-review">Added from ${esc(socialName(p.link || ''))}. Is the pin in the right place? <button type="button" class="pc-btn" data-a="ok">✓ Looks right</button><button type="button" class="pc-btn" data-a="move">Move pin</button></div>` : ''}
     ${p.review ? fromVideoHTML(p, false) : ''}
