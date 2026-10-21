@@ -1664,6 +1664,11 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .p-status button.on{background:var(--accent);color:var(--paper);}
   .p-loc{font-family:-apple-system,sans-serif;font-size:0.75rem;color:var(--muted);font-variant-numeric:tabular-nums;}
   .p-err{font-family:-apple-system,sans-serif;font-size:0.8rem;color:#a13f3f;margin-top:6px;}
+  .p-dup{margin:-4px 0 14px;padding:10px 12px;border-radius:6px;border:1px solid #d9a400;background:color-mix(in srgb, #d9a400 14%, transparent);font-family:-apple-system,sans-serif;font-size:0.84rem;line-height:1.45;}
+  .p-dup[hidden]{display:none;}
+  .p-dup small{display:block;color:var(--muted);font-size:0.76rem;}
+  .p-dup .pc-btn{margin-top:8px;}
+  .rr-saved{display:inline-block;margin-left:6px;padding:0 6px;border-radius:999px;background:color-mix(in srgb, var(--accent) 18%, transparent);color:var(--accent);font-size:0.7rem;font-weight:600;}
   .p-err:empty{display:none;}
   #placeOverlay{z-index:32;}
   /* route planner */
@@ -2489,6 +2494,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
     <button class="close" onclick="closePlaceForm()" aria-label="Close">&times;</button>
     <div class="pf-head"><span class="pm-pin pd-pin" id="p_preview"></span><h2 id="placeFormTitle">New place</h2></div>
     <div class="field"><label for="p_name">Name</label><input id="p_name" type="text" maxlength="120" autocomplete="off" placeholder="e.g. Café Savoy"></div>
+    <div class="p-dup" id="p_dup" role="status" hidden></div>
     <div class="field"><label>Pin</label>
       <div class="p-emojis" id="p_emojis"></div>
       <input id="p_emoji" class="p-emoji-in" type="text" maxlength="8" aria-label="Your own emoji" placeholder="or type any emoji">
@@ -6948,6 +6954,19 @@ function showResults(){
   else { plPick.nothingNear = true; plPick.listOpen = false; renderPickBar(); }
 }
 // how well a found name matches what you searched (0 to 1); works for Chinese, Japanese… too
+// one of your places at (about) the same spot: right there, or close by with a matching name
+function savedNear(pt, name, exceptId){
+  if(!pt || !validLatLng(+pt.lat, +pt.lng)) return null;
+  let best = null, bestD = 1e9;
+  for(const p of places){
+    if(p.id===exceptId || !validLatLng(p.lat, p.lng)) continue;
+    const d = distKm(p.lat, p.lng, +pt.lat, +pt.lng) * 1000;
+    if(d > 500) continue;
+    const m = name ? nameMatch(p.name || '', name) : 0;
+    if((d < 30 || (d < 150 && m >= 0.5) || (d < 500 && m >= 0.9)) && d < bestD){ best = p; bestD = d; }
+  }
+  return best;
+}
 function nameMatch(a, b){
   const f = x=>norm(x).replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   a = f(a); b = f(b); if(!a || !b) return 0; if(a===b) return 1;
@@ -8122,7 +8141,7 @@ function renderPickBar(){
           <a class="pc-btn" href="https://www.google.com/maps/search/${encodeURIComponent([plPick.inText, plPick.guessCity].filter(Boolean).join(' '))}${plPick.searchAt ? `/@${plPick.searchAt[0].toFixed(5)},${plPick.searchAt[1].toFixed(5)},13z` : ''}" target="_blank" rel="noopener noreferrer">${GMAPS_SVG}Look it up in Google Maps</a>
           <small>Found it there? Copy its link and paste it in the box above. Or tap the map where it is.</small>
         </div>` : ''}
-      ${res && !(plPick.nothingNear && !plPick.listOpen) ? `<div class="pp-results${plPick.previewI != null && !plPick.listOpen ? ' folded' : ''}">${res.length ? res.map((r,i)=>plPick.previewI != null && !plPick.listOpen && i!==plPick.previewI ? '' : `<button type="button" data-i="${i}"${i===plPick.previewI ? ' class="on"' : ''}><span class="rr-e">${esc(r.emoji)}</span><span class="rr-t"><b>${esc(r.name)}</b><small>${esc([r.kind, r.address].filter(Boolean).join(' · '))}</small></span>${i===plPick.previewI ? '<span class="rr-on">on the map<br>tap to save</span>' : `<span class="rr-see" data-see="${i}" role="button" tabindex="0" title="Show it on the map" aria-label="Show ${esc(r.name)} on the map">${'<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4"/></svg>'}</span>`}</button>`).join('')
+      ${res && !(plPick.nothingNear && !plPick.listOpen) ? `<div class="pp-results${plPick.previewI != null && !plPick.listOpen ? ' folded' : ''}">${res.length ? res.map((r,i)=>plPick.previewI != null && !plPick.listOpen && i!==plPick.previewI ? '' : `<button type="button" data-i="${i}"${i===plPick.previewI ? ' class="on"' : ''}><span class="rr-e">${esc(r.emoji)}</span><span class="rr-t"><b>${esc(r.name)}${savedNear(r, r.name) ? '<span class="rr-saved">✓ Saved</span>' : ''}</b><small>${esc([r.kind, r.address].filter(Boolean).join(' · '))}</small></span>${i===plPick.previewI ? '<span class="rr-on">on the map<br>tap to save</span>' : `<span class="rr-see" data-see="${i}" role="button" tabindex="0" title="Show it on the map" aria-label="Show ${esc(r.name)} on the map">${'<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4"/></svg>'}</span>`}</button>`).join('')
         : '<div class="pp-none">Nothing found. Try adding the city, or tap the map.</div>'}</div>
         ` : ''}
         ${res && res.length > 1 && plPick.previewI != null ? `<button type="button" class="pp-more" aria-expanded="${plPick.listOpen ? 'true' : 'false'}">${plPick.listOpen ? 'Hide other results ▴' : `Other results (${res.length - 1}) ▾`}</button>` : ''}
@@ -8204,7 +8223,18 @@ async function movePlace(id, lat, lng){
 }
 
 // ---- the place form ----
-let plFormColor = 'red', plFormStatus = 'want', plFormLists = [];
+let plFormColor = 'red', plFormStatus = 'want', plFormLists = [], plDupOk = false;
+function checkPlaceDup(){
+  const box = document.getElementById('p_dup'); if(!box) return null;
+  const dup = !plEditId && plDraft ? savedNear(plDraft, document.getElementById('p_name').value.trim()) : null;
+  box.hidden = !dup;
+  if(dup){
+    const addr = placeAddr(dup);
+    box.innerHTML = `⚠️ You already have <b>${esc(dup.name || 'a place')}</b> here.${addr ? `<small>${esc(addr)}</small>` : ''}<button type="button" class="pc-btn" id="p_dupOpen">Open mine instead</button>`;
+    box.querySelector('#p_dupOpen').onclick = ()=>{ const id = dup.id; plPick = null; closePlaceForm(); selectPlace(id, {pan:true}); };
+  }
+  return dup;
+}
 function openPlaceForm(id, pre){
   const p = id ? places.find(x=>x.id===id) : null;
   plEditId = p ? p.id : null;
@@ -8219,7 +8249,9 @@ function openPlaceForm(id, pre){
   plFormLists = p ? placeListsOf(p) : (plList!=='all' && listOf(plList) ? [plList] : []);     // a new place joins the collection you have open
   if(plNewAt==='form') plNewAt = '';
   document.getElementById('p_err').textContent = '';
+  plDupOk = false;
   paintPlaceForm();
+  checkPlaceDup();
   closeDetail();
   document.getElementById('placeOverlay').classList.add('show');
   setTimeout(()=>{ const n = document.getElementById('p_name'); if(!n.value || isWide()) n.focus(); }, 30);
@@ -8255,6 +8287,7 @@ async function savePlace(){
   const err = document.getElementById('p_err');
   if(!name){ err.textContent = 'Give the place a name.'; document.getElementById('p_name').focus(); return; }
   if(!plDraft || !validLatLng(plDraft.lat, plDraft.lng)){ err.textContent = 'This place has no spot on the map yet.'; return; }
+  if(!plEditId && !plDupOk && checkPlaceDup()){ plDupOk = true; err.textContent = 'This looks like a place you already saved. Tap Save again to add it anyway.'; return; }
   const link = document.getElementById('p_link').value.trim(), g = document.getElementById('p_gmaps').value.trim();
   const data = {name, emoji:(document.getElementById('p_emoji').value.trim() || '📍').slice(0, 8), color:plFormColor, status:plFormStatus,
                 note:document.getElementById('p_note').value.trim(), link: link ? normalizeLink(link) : '', gmapsUrl: g ? normalizeLink(g) : '',
@@ -8378,6 +8411,7 @@ function setupPlaces(){
   document.getElementById('p_colors').onclick = e=>{ const b = e.target.closest('.nc-sw'); if(!b) return; plFormColor = b.dataset.c; paintPlaceForm(); };
   document.getElementById('p_status').onclick = e=>{ const b = e.target.closest('button'); if(!b) return; plFormStatus = b.dataset.s; paintPlaceForm(); };
   document.getElementById('p_name').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); savePlace(); } });
+  document.getElementById('p_name').addEventListener('input', debounce(()=>{ if(document.getElementById('placeOverlay').classList.contains('show')) checkPlaceDup(); }, 250));
   document.addEventListener('keydown', e=>{
     if(e.key!=='Escape' || (currentMod!=='places' && currentMod!=='route')) return;
     if(document.getElementById('placeOverlay').classList.contains('show')){ closePlaceForm(); return; }
