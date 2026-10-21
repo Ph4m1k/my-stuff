@@ -1492,7 +1492,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pm-pin.sel .pm-dot{transform:translateY(-5.3px) rotate(-45deg) scale(1.22);border-color:var(--ink);}   /* bigger, with its tip staying on the spot */
   .pm-pin.temp .pm-dot{border-style:dashed;animation:pmPulse 1.2s ease-in-out infinite;}
   .pm-pin.temp .pm-emo{color:#fff;font-weight:700;}
-  @keyframes pmPulse{50%{transform:rotate(-45deg) scale(1.12);}}
+  @keyframes pmPulse{50%{transform:translateY(-2.9px) rotate(-45deg) scale(1.12);}}
   @media (prefers-reduced-motion:reduce){ .pm-pin.temp .pm-dot{animation:none;} .pm-tiles img{transition:none;} }
   /* map controls */
   .pm-ui{z-index:5;}
