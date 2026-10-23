@@ -1691,6 +1691,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-mini-btn{border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:4px;padding:4px 9px;font-size:0.76rem;cursor:pointer;}
   .rt-mini-btn.on{border-color:var(--accent);color:var(--accent);font-weight:600;}
   .rt-spick{flex-basis:100%;display:flex;flex-direction:column;gap:4px;margin-top:4px;}
+  .rt-spick .rt-sec{margin-top:6px;font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);}
   .rt-spick input{padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);font:inherit;font-size:0.84rem;}
   .rt-spick button{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);text-align:left;cursor:pointer;font:inherit;font-size:0.82rem;}
   .rt-spick button b{display:block;font-weight:600;}
@@ -6809,7 +6810,11 @@ function ensurePlacesMap(){
   // outside Claude the map can be drawn live (smooth at every zoom); otherwise, or if that can't start, the picture map
   plMap = (HOST && HOST.createMap && HOST.createMap(mapEl)) || createMap(mapEl);
   plMap.onClick = ll=>{
-    if(rt.on){ if(rt.setStart){ rt.start = {lat: ll[0], lng: ll[1]}; rt.startSrc = 'map'; rt.setStart = false; rt.locErr = ''; replanIfAsked(); } return; }
+    if(rt.on){
+      // choosing the start: wait a moment, so a tap on a pin (which also reaches the map) picks that place instead of the bare spot
+      if(rt.setStart) setTimeout(()=>{ if(!rt.setStart) return; rt.start = {lat: ll[0], lng: ll[1]}; rt.startSrc = 'map'; rt.startName = ''; rt.setStart = false; rt.locErr = ''; rt.mini = false; replanIfAsked(); }, 60);
+      return;
+    }
     if(plPick){ pickedSpot(ll[0], ll[1]); return; }
     selectPlace(null);
   };
@@ -7513,7 +7518,7 @@ function doneHere(k){
 function startAtPlace(p){
   if(!p || !validLatLng(p.lat, p.lng)) return;
   rt.start = {lat: +p.lat, lng: +p.lng}; rt.startSrc = 'place'; rt.startName = p.name || 'your place';
-  rt.setStart = false; rt.startPick = false; rt.startQ = ''; rt.locErr = '';
+  rt.setStart = false; rt.startPick = false; rt.startQ = ''; rt.locErr = ''; rt.mini = false;
   const on = rt.stops.find(x=>x.placeId===p.id || sameSpot(x, p));     // starting there, so it isn't a stop any more
   if(on){ rt.stops = rt.stops.filter(x=>x!==on); saveRt(); rt.res = null; toast(`Starting at “${rt.startName}”, so it’s no longer a stop.`); }
   replanIfAsked();
@@ -7815,10 +7820,65 @@ async function routeSearch(text){
 // the list of your places to start from (nearest to the map first), with a small filter box
 function startPickHTML(){
   const q = norm(rt.startQ || ''), c = plMap ? plMap.center() : [50.08, 14.43];
-  const list = places.filter(p=>validLatLng(p.lat, p.lng) && (!q || norm([p.name, p.address].join(' ')).includes(q)))
-    .map(p=>({p, d: distKm(c[0], c[1], p.lat, p.lng)})).sort((a, b)=>a.d - b.d).slice(0, 8).map(x=>x.p);
-  return `<div class="rt-spick"><input type="search" id="rtStartQ" placeholder="Find one of your places…" aria-label="Find one of your places" value="${esc(rt.startQ || '')}">
-    ${list.length ? list.map(p=>`<button type="button" data-start="${esc(p.id)}"><span>${esc(placeEmoji(p))}</span><span><b>${esc(p.name || 'Place')}</b>${placeAddr(p) ? `<small>${esc(placeAddr(p))}</small>` : ''}</span></button>`).join('') : '<div class="rt-empty">None of your places match.</div>'}</div>`;
+  const mine = places.filter(p=>validLatLng(p.lat, p.lng) && (!q || norm([p.name, p.address].join(' ')).includes(q)))
+    .map(p=>({p, d: distKm(c[0], c[1], p.lat, p.lng)})).sort((a, b)=>a.d - b.d).slice(0, q ? 5 : 6).map(x=>x.p);
+  const row = (attr, emo, name, sub)=>`<button type="button" ${attr}><span>${esc(emo)}</span><span><b>${esc(name)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span></button>`;
+  const found = rt.startRes || [];
+  return `<form class="rt-spick" id="rtStartF"><input type="search" id="rtStartQ" enterkeyhint="search" autocomplete="off" placeholder="Your place, an address, or a Google Maps link" aria-label="Where you start: your place, an address, or a Google Maps link" value="${esc(rt.startQ || '')}">
+    ${rt.startMsg ? `<div class="rt-empty" role="status">${rt.startBusy ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}${esc(rt.startMsg)}</div>` : ''}
+    ${mine.length ? `<div class="rt-sec">Your places</div>${mine.map(p=>row(`data-start="${esc(p.id)}"`, placeEmoji(p), p.name || 'Place', placeAddr(p))).join('')}` : ''}
+    ${found.length ? `<div class="rt-sec">On the map</div>${found.map((r, i)=>row(`data-startf="${i}"`, r.emoji || '📍', r.name, r.address || '')).join('')}`
+      : rt.startBusy && !rt.startMsg ? '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Searching…</div>'
+      : q && !mine.length && rt.startDone ? '<div class="rt-empty">Nothing found. Try another name or address.</div>' : ''}</form>`;
+}
+// start at any spot: an address or shop from the search, or a place from a Google Maps link
+function startAtSpot(pt){
+  if(!pt || !validLatLng(+pt.lat, +pt.lng)) return;
+  const mine = places.find(p=>validLatLng(p.lat, p.lng) && sameSpot(p, pt));
+  if(mine){ startAtPlace(mine); return; }
+  rt.start = {lat: +pt.lat, lng: +pt.lng}; rt.startSrc = 'place'; rt.startName = pt.name || 'the address you chose';
+  rt.setStart = false; rt.startPick = false; rt.startQ = ''; rt.startRes = null; rt.startMsg = ''; rt.locErr = ''; rt.mini = false;
+  const on = rt.stops.find(x=>sameSpot(x, pt));
+  if(on){ rt.stops = rt.stops.filter(x=>x!==on); saveRt(); rt.res = null; }
+  if(plMap) plMap.flyTo(rt.start.lat, rt.start.lng, Math.max(plMap.z, 14));
+  replanIfAsked();
+}
+let startCtl = null;
+async function startSearch(text, now){
+  text = String(text || '').trim(); rt.startQ = text; rt.startMsg = ''; rt.startDone = false;
+  if(startCtl){ startCtl.abort(); startCtl = null; }
+  const isLink = /^https?:\/\//i.test(text) || /^-?\d{1,2}\.\d+\s*[,;\s]\s*-?\d{1,3}\.\d+$/.test(text);
+  if(isLink){
+    let r = parsePlaceLink(text);
+    rt.startRes = null;
+    if(!r){ rt.startMsg = "That isn't a Google Maps link. Paste one from Google Maps, or type an address."; renderRoute(); return; }
+    if(r.short){
+      if(!(window.MYSTUFF_HOST && MYSTUFF_HOST.importLink)){ rt.startMsg = "Short phone links can't be opened here. Type the address instead."; renderRoute(); return; }
+      rt.startBusy = true; rt.startMsg = 'Opening the Google Maps link…'; renderRoute();
+      const ask = rt.startQ;
+      let res = null; try{ res = await Promise.race([MYSTUFF_HOST.importLink(r.url), new Promise(ok=>setTimeout(()=>ok(null), 25000))]); }catch(e){}
+      if(rt.startQ !== ask || !rt.startPick) return;
+      rt.startBusy = false;
+      const full = res && res.ok && res.resolved && parsePlaceLink(res.resolved);
+      if(full && !full.short && full.lat==null && validLatLng(res.lat, res.lng)){ const [la, ln] = gcjToGps(res.lat, res.lng); full.lat = la; full.lng = ln; }
+      if(!full || full.short || (full.lat==null && !full.name)){ rt.startMsg = "Couldn't open that link. Type the address instead."; renderRoute(); return; }
+      r = full; rt.startMsg = '';
+    }
+    if(r.lat!=null){ startAtSpot({lat: r.lat, lng: r.lng, name: r.name || 'Place from Google Maps'}); return; }
+    if(r.name){ startSearch(r.name, true); return; }
+    rt.startMsg = "That link doesn't say where the place is. Type the address instead."; renderRoute(); return;
+  }
+  if(text.length < 3 || !(HOST && HOST.searchPlaces)){ rt.startRes = null; rt.startBusy = false; renderRoute(); return; }
+  const ctl = startCtl = new AbortController();
+  rt.startBusy = true; renderRoute();
+  const [clat, clng] = rt.start ? [rt.start.lat, rt.start.lng] : plMap.center();
+  const shape = l=>(l || []).filter(x=>validLatLng(x.lat, x.lng)).slice(0, 6).map(x=>({name: x.name, lat: x.lat, lng: x.lng, address: x.address || '', emoji: x.emoji || (x.categories && x.categories.length ? emojiForCategories(x.categories) : '📍')}));
+  let found = [];
+  try{ found = await HOST.searchPlaces(text, clat, clng, ctl.signal, part=>{ if(ctl===startCtl && rt.startPick){ rt.startRes = shape(part); renderRoute(); } }); }catch(e){ if(ctl.signal.aborted) return; }
+  if(ctl !== startCtl || !rt.startPick) return;
+  startCtl = null; rt.startBusy = false; rt.startDone = true;
+  if(found && found.length) rt.startRes = shape(found);
+  renderRoute();
 }
 const localInputValue = t=>{ const d = new Date(t); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
 function fmtWhen(t){
@@ -7832,6 +7892,7 @@ function renderRoute(){
   document.getElementById('placesView').classList.toggle('rt-mini', rt.mini);
   const count = document.getElementById('count'); if(count) count.textContent = rt.stops.length ? `${rt.stops.length} ${rt.stops.length===1 ? 'stop' : 'stops'}` : '';
   const typing = document.activeElement && document.activeElement.id==='rtQ', caret = typing ? document.activeElement.selectionStart : 0;
+  const typingS = document.activeElement && document.activeElement.id==='rtStartQ', caretS = typingS ? document.activeElement.selectionStart : 0;
   const res = rt.res && rt.res.key===routeKey() ? rt.res : null;
   const ordered = res ? res.order.map(j=>rt.stops[j - 1]) : rt.stops;
   const prevOf = i=>i ? ordered[i - 1] : rt.start;
@@ -7848,7 +7909,7 @@ function renderRoute(){
     </div>
     <div class="rt-start"><span class="rt-s">${startLine}</span>
       <button type="button" class="rt-mini-btn" id="rtLocate">Use where I am</button>
-      <button type="button" class="rt-mini-btn${rt.startPick ? ' on' : ''}" id="rtPickPlace">One of my places</button>
+      <button type="button" class="rt-mini-btn${rt.startPick ? ' on' : ''}" id="rtPickPlace">Find a place or address</button>
       <button type="button" class="rt-mini-btn${rt.setStart ? ' on' : ''}" id="rtPickStart">${rt.setStart ? 'Now tap the map or a pin…' : 'Choose on the map'}</button>
       ${rt.locErr ? `<small class="err">${esc(rt.locErr)}</small>` : ''}
       ${rt.startPick ? startPickHTML() : ''}</div>
@@ -7873,7 +7934,7 @@ function renderRoute(){
         : res.trOk ? `<div class="rt-sum">≈ <b>${fmtDur(Math.max(0, (res.arrive - (res.leave || Date.now())) / 1000))}</b> by public transport${rt.leaveAt ? `, leaving ${esc(fmtWhen(res.leave))}` : ''} · at your last stop around <b>${fmtClock(res.arrive)}</b>.<small>Times for later stops assume you leave as soon as you arrive. When you’re finished at a stop, tap <b>✓ Done here</b> for fresh times from where you are.${res.trOk < res.legs.length ? ' For steps without a connection, tap <b>Go</b> for Google Maps.' : ''}</small><small class="rt-credit">Connections: <a href="https://transitous.org" target="_blank" rel="noopener noreferrer">Transitous</a> · <a href="${TRANSITOUS_SOURCES}" target="_blank" rel="noopener noreferrer">timetable sources</a></small></div>`
         : `<div class="rt-sum">Stops in the shortest order (${fmtDist(res.total.dist)} in all).<small>${HOST ? 'Couldn’t get tram, metro and bus times right now.' : 'Tram, metro and bus times work in the app version (outside Claude).'} Tap <b>Go</b> at each stop for public transport directions in Google Maps.</small></div>`)
       : rt.busy ? '<div class="rt-sum"><span class="busy-spin" aria-hidden="true"></span>Working out the quickest order…</div>'
-      : rt.stops.length && !rt.asked ? `<div class="rt-go"><button type="button" class="pc-btn pc-main" id="rtPlan"${rt.start ? '' : ' disabled'}>🧭 Plan my route${rt.stops.length > 1 ? ` · ${rt.stops.length} stops` : ''}</button><small>${rt.start ? 'Add all your stops first, then press this to get the quickest order.' : 'Set where you start (above) first.'}</small></div>`
+      : rt.stops.length && !rt.asked && !rt.startPick && !rt.results ? `<div class="rt-go"><button type="button" class="pc-btn pc-main" id="rtPlan"${rt.start ? '' : ' disabled'}>🧭 Plan my route${rt.stops.length > 1 ? ` · ${rt.stops.length} stops` : ''}</button><small>${rt.start ? 'Add all your stops first, then press this to get the quickest order.' : 'Set where you start (above) first.'}</small></div>`
       : rt.stops.length && !rt.start ? '<div class="rt-sum">Set where you start (above), and I’ll work out the order.</div>' : ''}
     ${rt.stops.length ? `<div class="rt-acts">${res && rt.start ? gmRouteButtons(rt.start, ordered, rt.mode) : ''}
       <button type="button" class="pc-btn" id="rtClear">Clear route</button></div>` : ''}`;
@@ -7883,10 +7944,16 @@ function renderRoute(){
   box.querySelectorAll('.rt-modes [data-m]').forEach(b=>b.onclick = ()=>{ if(rt.mode===b.dataset.m) return; rt.mode = b.dataset.m; rt.res = null; saveRt(); replanIfAsked(); });
   box.querySelector('#rtLocate').onclick = ()=>{ rt.setStart = false; locateMe(); };
   box.querySelector('#rtPickStart').onclick = ()=>{ rt.setStart = !rt.setStart; rt.startPick = false; if(rt.setStart && !isWide()) rt.mini = true; renderRoute(); };
-  box.querySelector('#rtPickPlace').onclick = ()=>{ rt.startPick = !rt.startPick; rt.setStart = false; rt.startQ = ''; renderRoute(); if(rt.startPick) setTimeout(()=>{ const i = document.getElementById('rtStartQ'); if(i && isWide()) i.focus(); }, 30); };
+  box.querySelector('#rtPickPlace').onclick = ()=>{ rt.startPick = !rt.startPick; if(rt.startPick) rt.mini = false; rt.setStart = false; rt.startQ = ''; rt.startRes = null; rt.startMsg = ''; renderRoute(); if(rt.startPick) setTimeout(()=>{ const i = document.getElementById('rtStartQ'); if(i) i.focus(); }, 30); };
   box.querySelectorAll('[data-start]').forEach(b=>b.onclick = ()=>startAtPlace(places.find(x=>x.id===b.dataset.start)));
+  box.querySelectorAll('[data-startf]').forEach(b=>b.onclick = ()=>startAtSpot((rt.startRes || [])[+b.dataset.startf]));
   const sq = box.querySelector('#rtStartQ');
-  if(sq) sq.oninput = debounce(()=>{ rt.startQ = sq.value; const pos = sq.selectionStart; renderRoute(); const n = document.getElementById('rtStartQ'); if(n){ n.focus(); try{ n.setSelectionRange(pos, pos); }catch(e){} } }, 200);
+  if(sq){
+    const keep = fn=>{ const pos = sq.selectionStart; fn(); const n = document.getElementById('rtStartQ'); if(n && document.activeElement!==n){ n.focus(); try{ n.setSelectionRange(pos, pos); }catch(e){} } };
+    sq.oninput = debounce(()=>keep(()=>startSearch(sq.value)), 400);
+    sq.addEventListener('paste', e=>{ const t = ((e.clipboardData && e.clipboardData.getData('text')) || '').trim(); if(/^https?:\/\//i.test(t)) setTimeout(()=>startSearch(t, true), 0); });
+    box.querySelector('#rtStartF').onsubmit = e=>{ e.preventDefault(); keep(()=>startSearch(sq.value, true)); };
+  }
   const nowB = box.querySelector('#rtNow'); if(nowB) nowB.onclick = ()=>{ if(!rt.leaveAt) return; rt.leaveAt = null; rt.res = null; replanIfAsked(); };
   const wh = box.querySelector('#rtWhen');
   if(wh) wh.onchange = ()=>{ const t = wh.value ? new Date(wh.value).getTime() : NaN; rt.leaveAt = isFinite(t) && t > Date.now() + 60e3 ? t : null; rt.res = null; replanIfAsked(); };
@@ -7895,6 +7962,7 @@ function renderRoute(){
   q.oninput = debounce(()=>{ if(q.value.trim().length >= 2) routeSearch(q.value); else if(!q.value.trim()){ rt.q = ''; rt.results = null; renderRoute(); } }, 350);
   q.addEventListener('paste', e=>{ const t = ((e.clipboardData && e.clipboardData.getData('text')) || '').trim(); if(/^https?:\/\//i.test(t)) setTimeout(()=>routeSearch(q.value), 0); });
   if(typing){ q.focus(); try{ q.setSelectionRange(caret, caret); }catch(e){} }
+  if(typingS){ const n = box.querySelector('#rtStartQ'); if(n){ n.focus(); try{ n.setSelectionRange(caretS, caretS); }catch(e){} } }
   box.querySelectorAll('[data-add]').forEach(b=>b.onclick = ()=>{ const [kind, i] = b.dataset.add.split(':'); const r = (kind==='m' ? R.mine : R.found)[+i]; if(r) addStop(r); });
   box.querySelectorAll('[data-rm]').forEach(b=>b.onclick = ()=>removeStop(b.dataset.rm));
   box.querySelectorAll('[data-done]').forEach(b=>b.onclick = ()=>doneHere(b.dataset.done));
