@@ -7515,9 +7515,9 @@ function doneHere(k){
   });
 }
 // start the route at one of your saved places
-function startAtPlace(p){
+function startAtPlace(p, via){
   if(!p || !validLatLng(p.lat, p.lng)) return;
-  rt.start = {lat: +p.lat, lng: +p.lng}; rt.startSrc = 'place'; rt.startName = p.name || 'your place';
+  rt.start = {lat: +p.lat, lng: +p.lng}; rt.startSrc = 'place'; rt.startName = p.name || 'your place'; rt.startVia = via || 'find';
   rt.setStart = false; rt.startPick = false; rt.startQ = ''; rt.locErr = ''; rt.mini = false;
   const on = rt.stops.find(x=>x.placeId===p.id || sameSpot(x, p));     // starting there, so it isn't a stop any more
   if(on){ rt.stops = rt.stops.filter(x=>x!==on); saveRt(); rt.res = null; toast(`Starting at “${rt.startName}”, so it’s no longer a stop.`); }
@@ -7525,7 +7525,7 @@ function startAtPlace(p){
 }
 function routePinTapped(id){
   if(id==='__start' || id==='__poi' || id==='__temp') return;
-  if(rt.setStart && !id.startsWith('__')){ startAtPlace(places.find(x=>x.id===id)); return; }   // choosing the start: a pin counts too
+  if(rt.setStart && !id.startsWith('__')){ startAtPlace(places.find(x=>x.id===id), 'map'); return; }   // choosing the start: a pin counts too
   if(id.startsWith('__stop_')){ removeStop(id.slice(7)); return; }
   const p = places.find(x=>x.id===id); if(!p) return;
   const on = rt.stops.find(x=>x.placeId===p.id);
@@ -7836,7 +7836,7 @@ function startAtSpot(pt){
   if(!pt || !validLatLng(+pt.lat, +pt.lng)) return;
   const mine = places.find(p=>validLatLng(p.lat, p.lng) && sameSpot(p, pt));
   if(mine){ startAtPlace(mine); return; }
-  rt.start = {lat: +pt.lat, lng: +pt.lng}; rt.startSrc = 'place'; rt.startName = pt.name || 'the address you chose';
+  rt.start = {lat: +pt.lat, lng: +pt.lng}; rt.startSrc = 'place'; rt.startName = pt.name || 'the address you chose'; rt.startVia = 'find';
   rt.setStart = false; rt.startPick = false; rt.startQ = ''; rt.startRes = null; rt.startMsg = ''; rt.locErr = ''; rt.mini = false;
   const on = rt.stops.find(x=>sameSpot(x, pt));
   if(on){ rt.stops = rt.stops.filter(x=>x!==on); saveRt(); rt.res = null; }
@@ -7899,6 +7899,9 @@ function renderRoute(){
   const startLine = rt.locating ? '<span class="busy-spin" aria-hidden="true"></span> Finding where you are…'
     : rt.start ? (rt.startSrc==='gps' ? '📍 Start: <b>where you are now</b>' : rt.startSrc==='stop' || rt.startSrc==='place' ? `📍 Start: <b>${esc(rt.startName || 'your last stop')}</b>` : '📍 Start: <b>the spot you chose on the map</b>')
     : '📍 Start: <b>not set yet</b>';
+  // which of the three start buttons is lit: the one you're using right now, or the one the start came from
+  const srcOn = rt.setStart ? 'map' : rt.startPick ? 'find' : rt.locating ? 'gps' : !rt.start ? ''
+    : rt.startSrc==='gps' ? 'gps' : rt.startSrc==='map' ? 'map' : rt.startSrc==='place' ? (rt.startVia==='map' ? 'map' : 'find') : '';
   const R = rt.results;
   const resRow = (r, kind, i)=>`<button type="button" data-add="${kind}:${i}"><span>${esc(r.emoji || '📍')}</span><span><b>${esc(r.name)}</b>${r.sub ? `<small>${esc(r.sub)}</small>` : ''}</span></button>`;
   box.innerHTML = `
@@ -7908,9 +7911,9 @@ function renderRoute(){
       <button type="button" role="radio" data-m="transit" class="${rt.mode==='transit' ? 'on' : ''}" aria-checked="${rt.mode==='transit'}">🚇 Public transport</button>
     </div>
     <div class="rt-start"><span class="rt-s">${startLine}</span>
-      <button type="button" class="rt-mini-btn" id="rtLocate">Use where I am</button>
-      <button type="button" class="rt-mini-btn${rt.startPick ? ' on' : ''}" id="rtPickPlace">Find a place or address</button>
-      <button type="button" class="rt-mini-btn${rt.setStart ? ' on' : ''}" id="rtPickStart">${rt.setStart ? 'Now tap the map or a pin…' : 'Choose on the map'}</button>
+      <button type="button" class="rt-mini-btn${srcOn==='gps' ? ' on' : ''}" aria-pressed="${srcOn==='gps'}" id="rtLocate">Use where I am</button>
+      <button type="button" class="rt-mini-btn${srcOn==='find' ? ' on' : ''}" aria-pressed="${srcOn==='find'}" id="rtPickPlace">Find a place or address</button>
+      <button type="button" class="rt-mini-btn${srcOn==='map' ? ' on' : ''}" aria-pressed="${srcOn==='map'}" id="rtPickStart">${rt.setStart ? 'Now tap the map or a pin…' : 'Choose on the map'}</button>
       ${rt.locErr ? `<small class="err">${esc(rt.locErr)}</small>` : ''}
       ${rt.startPick ? startPickHTML() : ''}</div>
     ${rt.mode==='transit' ? `<div class="rt-when"><span>🕘 Leave</span>
