@@ -1733,6 +1733,8 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-nm{display:flex;flex-direction:column;}
   .rt-credit{display:block;margin-top:4px;}
   .rt-credit a{color:inherit;}
+  .rt-stops li.rt-startrow{border-style:dashed;background:none;}
+  .rt-startrow .rt-n{font-size:0.62rem;padding-left:1px;}
   .rt-x{flex:0 0 auto;border:none;background:none;color:var(--muted);font-size:1.1rem;cursor:pointer;padding:0 4px;}
   .rt-sum{padding:8px 10px;border-radius:6px;background:color-mix(in srgb, var(--accent) 10%, transparent);font-size:0.84rem;}
   .rt-sum small{display:block;color:var(--muted);font-size:0.74rem;margin-top:3px;}
@@ -1746,6 +1748,8 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pm-pin.dim{opacity:.45;}
   .pm-pin.stop .pm-dot{background:var(--accent);border-color:var(--paper);}
   .pm-pin.stop .pm-emo{color:var(--paper);font-weight:800;font-family:-apple-system,sans-serif;font-size:0.82rem;}
+  .pm-pin.start .pm-emo{font-size:0.75rem;padding-left:2px;}
+  .pm-pin.start .pm-name{display:block;}
   .pm-pin.me .pm-dot{left:-8px;top:-8px;width:16px;height:16px;min-width:0;border-radius:50%;background:#2f6fdb;border:3px solid #fff;box-shadow:0 0 0 6px rgba(47,111,219,.22);transform:none;}
   .pm-pin.me .pm-dot .pm-emo{display:none;}
   @media (max-width:859px){
@@ -7537,7 +7541,9 @@ function stopNumber(k){
 }
 function routeMarkers(){
   const out = [];
+  const pinStart = rt.start && rt.startSrc!=='gps';           // a place or spot you chose: a green "start" pin like the stops
   places.filter(p=>validLatLng(p.lat, p.lng)).forEach(p=>{
+    if(pinStart && sameSpot(p, rt.start)) return;            // your place is the start: the start pin stands in for it
     const st = rt.stops.find(x=>x.placeId===p.id);
     out.push(st ? {id: p.id, lat: p.lat, lng: p.lng, label: `Stop ${stopNumber(st.k)}: ${p.name || ''}`, cls: 'stop', pc: 'var(--accent)',
                    html: `<span class="pm-dot"><span class="pm-emo">${stopNumber(st.k)}</span></span><span class="pm-name">${esc(p.name || '')}</span>`}
@@ -7546,7 +7552,9 @@ function routeMarkers(){
   });
   rt.stops.filter(s=>!s.placeId || !places.some(p=>p.id===s.placeId)).forEach(s=>out.push({id: '__stop_' + s.k, lat: s.lat, lng: s.lng, label: `Stop ${stopNumber(s.k)}: ${s.name}`, cls: 'stop', pc: 'var(--accent)',
     html: `<span class="pm-dot"><span class="pm-emo">${stopNumber(s.k)}</span></span><span class="pm-name">${esc(s.name)}</span>`}));
-  if(rt.start) out.push({id: '__start', lat: rt.start.lat, lng: rt.start.lng, label: 'Start', cls: 'me', pc: '#2f6fdb', html: '<span class="pm-dot"><span class="pm-emo"></span></span>'});
+  if(pinStart) out.push({id: '__start', lat: rt.start.lat, lng: rt.start.lng, label: `Start: ${rt.startName || 'the spot you chose'}`, cls: 'stop start', pc: 'var(--accent)',
+    html: `<span class="pm-dot"><span class="pm-emo">▶</span></span><span class="pm-name">${esc(rt.startName || 'Start')}</span>`});
+  else if(rt.start) out.push({id: '__start', lat: rt.start.lat, lng: rt.start.lng, label: 'Start: where you are', cls: 'me', pc: '#2f6fdb', html: '<span class="pm-dot"><span class="pm-emo"></span></span>'});
   return out;
 }
 // ---- distances: walking routes from OpenStreetMap (or straight lines when that can't be reached) ----
@@ -7925,7 +7933,7 @@ function renderRoute(){
     ${R ? `<div class="rt-res">${R.mine.length ? `<div class="rt-sec">Your places</div>${R.mine.map((r, i)=>resRow(r, 'm', i)).join('')}` : ''}
       ${R.found ? (R.found.length ? `<div class="rt-sec">On the map</div>${R.found.map((r, i)=>resRow(r, 'f', i)).join('')}${rt.searching ? '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Looking for more…</div>' : ''}` : (R.mine.length ? '' : '<div class="rt-empty">Nothing found. Try another name, or tap the place on the map.</div>')) : '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Searching…</div>'}</div>` : ''}
     <div class="rt-hint">Or tap any of your pins, or any shop on the map, to add it. Tap a numbered pin to take it off.</div>
-    ${rt.stops.length ? `<ol class="rt-stops">${ordered.map((s, i)=>{ const leg = res && res.legs[i];
+    ${rt.stops.length ? `<ol class="rt-stops">${rt.start ? `<li class="rt-startrow"><span class="rt-n">▶</span><span class="rt-nm"><b>${rt.startSrc==='gps' ? '📍 Where you are now' : esc(rt.startName || 'The spot you chose on the map')}</b><small>Start</small></span></li>` : ''}${ordered.map((s, i)=>{ const leg = res && res.legs[i];
         const tr = leg && rt.mode==='transit' && leg.tr;
         return `<li class="${tr ? 'has-tr' : ''}"><span class="rt-n">${i + 1}</span><span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? trLegHtml(tr, i===0) : `<small>${leg ? (rt.mode==='walk' ? `${fmtDur(leg.dur)} walk · ${fmtDist(leg.dist)}${res.est ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
           ${i===0 && res && rt.start ? `<button type="button" class="rt-done" data-done="${esc(s.k)}">✓ Done here</button>` : ''}</span>
