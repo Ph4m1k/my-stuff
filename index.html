@@ -1681,8 +1681,8 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}
   .rt-head b{font-size:0.95rem;}
   .rt-min{display:none;border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:999px;padding:3px 10px;font-size:0.76rem;cursor:pointer;}
-  .rt-modes{display:flex;gap:6px;}
-  .rt-modes button{flex:1;padding:7px 8px;border:1px solid var(--line);border-radius:999px;background:var(--paper);color:var(--ink);font:inherit;font-size:0.82rem;cursor:pointer;}
+  .rt-modes{display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:6px;}
+  .rt-modes button{padding:7px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border:1px solid var(--line);border-radius:999px;background:var(--paper);color:var(--ink);font:inherit;font-size:0.82rem;cursor:pointer;}
   .rt-modes button.on{background:var(--accent);border-color:var(--accent);color:var(--paper);}
   .rt-start{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);}
   .rt-start .rt-s{flex:1 1 100%;display:flex;align-items:center;gap:6px;}
@@ -2754,7 +2754,7 @@ const RT_KEY = 'route-plan';
 const rt = {on:false, stops:[], mode:'walk', start:null, startSrc:'', locating:false, locErr:'', setStart:false,
             res:null, busy:false, err:'', q:'', results:null, searching:false, mini:false};
 try{ const sv = JSON.parse(localStorage.getItem(RT_KEY) || 'null');
-  if(sv){ rt.stops = (sv.stops || []).filter(x=>x && validLatLng(x.lat, x.lng)).slice(0, 12); rt.mode = sv.mode==='transit' ? 'transit' : 'walk'; } }catch(e){}
+  if(sv){ rt.stops = (sv.stops || []).filter(x=>x && validLatLng(x.lat, x.lng)).slice(0, 12); rt.mode = sv.mode==='transit' || sv.mode==='car' ? sv.mode : 'walk'; } }catch(e){}
 
 
 // ---------- Browsing: search, sort, filters (kept per module, per browser) ----------
@@ -7562,6 +7562,10 @@ function routeMarkers(){
 }
 // ---- distances: walking routes from OpenStreetMap (or straight lines when that can't be reached) ----
 const OSRM_FOOT = 'https://routing.openstreetmap.de/routed-foot';
+const OSRM_CAR = 'https://routing.openstreetmap.de/routed-car';      // car times from the same free service (normal traffic, no live jams)
+const CAR_KMH = 28;                                                 // a rough city speed, only when the service can't be reached
+const osrmBase = ()=>rt.mode==='car' ? OSRM_CAR : OSRM_FOOT;
+const roadMode = ()=>rt.mode==='walk' || rt.mode==='car';            // modes with a road route drawn and timed by OSRM
 // Public transport connections: Transitous, a free community journey planner (https://transitous.org) built on the
 // timetables transport companies publish (in Prague: PID). Asked only when you press "Plan my route" or "Done here".
 const TRANSITOUS = 'https://api.transitous.org/api/v5/plan';
@@ -7622,14 +7626,14 @@ async function fetchJSON(url, ms){
   finally{ clearTimeout(t); }
 }
 async function walkMatrix(pts){
-  const j = await fetchJSON(`${OSRM_FOOT}/table/v1/driving/${pts.map(p=>`${(+p.lng).toFixed(6)},${(+p.lat).toFixed(6)}`).join(';')}?annotations=duration,distance`, 15000);
+  const j = await fetchJSON(`${osrmBase()}/table/v1/driving/${pts.map(p=>`${(+p.lng).toFixed(6)},${(+p.lat).toFixed(6)}`).join(';')}?annotations=duration,distance`, 15000);
   if(!j || j.code!=='Ok' || !j.durations) throw new Error('no table');
   const st = straightMatrix(pts);
   return {dur: j.durations.map((r, i)=>r.map((v, k)=>v==null ? st.dur[i][k] : v)), dist: (j.distances || st.dist).map((r, i)=>r.map((v, k)=>v==null ? st.dist[i][k] : v))};
 }
 function straightMatrix(pts){
   const dist = pts.map(a=>pts.map(b=>distKm(a.lat, a.lng, b.lat, b.lng) * 1000 * 1.3));   // streets aren't straight: about 30 % longer
-  return {dist, dur: dist.map(r=>r.map(d=>d / (WALK_KMH / 3.6)))};
+  return {dist, dur: dist.map(r=>r.map(d=>d / ((rt.mode==='car' ? CAR_KMH : WALK_KMH) / 3.6)))};
 }
 // the best order: try every order for up to 8 stops; for more, start with the nearest each time and keep improving
 function bestOrder(c){
@@ -7674,13 +7678,13 @@ async function planRoute(){
   try{ M = await walkMatrix(pts); }catch(e){ M = null; }
   if(seq !== planSeq || !rt.on) return;
   if(!M){ M = straightMatrix(pts); est = true; }
-  const order = bestOrder(rt.mode==='walk' ? M.dur : M.dist);
+  const order = bestOrder(roadMode() ? M.dur : M.dist);
   const legs = order.map((j, i)=>{ const a = i ? order[i - 1] : 0; return {from: a, to: j, dur: M.dur[a][j], dist: M.dist[a][j]}; });
   let geom = null;
-  if(rt.mode==='walk' && !est){
+  if(roadMode() && !est){
     try{
       const way = [0, ...order].map(j=>pts[j]);
-      const g = await fetchJSON(`${OSRM_FOOT}/route/v1/driving/${way.map(p=>`${(+p.lng).toFixed(6)},${(+p.lat).toFixed(6)}`).join(';')}?overview=full&geometries=geojson&steps=false`, 15000);
+      const g = await fetchJSON(`${osrmBase()}/route/v1/driving/${way.map(p=>`${(+p.lng).toFixed(6)},${(+p.lat).toFixed(6)}`).join(';')}?overview=full&geometries=geojson&steps=false`, 15000);
       if(seq !== planSeq || !rt.on) return;
       const r = g && g.routes && g.routes[0];
       if(r){ geom = r.geometry && r.geometry.coordinates; (r.legs || []).forEach((l, i)=>{ if(legs[i]){ legs[i].dur = l.duration; legs[i].dist = l.distance; } }); }
@@ -7735,17 +7739,17 @@ const fmtDist = m=>m < 950 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFi
 // can't do several stops at once, so the next step opens; after each shop, ✓ Done here, then this button again.
 function gmRouteButtons(start, ordered, mode){
   const ll = p=>`${(+p.lat).toFixed(6)},${(+p.lng).toFixed(6)}`;
-  if(mode!=='walk') return `<a class="pc-btn pc-main" target="_blank" rel="noopener noreferrer" href="${esc(gmDir(start, ordered[0], 'transit'))}">${GMAPS_SVG}Next step in Google Maps</a>
+  if(mode==='transit') return `<a class="pc-btn pc-main" target="_blank" rel="noopener noreferrer" href="${esc(gmDir(start, ordered[0], 'transit'))}">${GMAPS_SVG}Next step in Google Maps</a>
     <small class="rt-gmnote">Google Maps can’t plan public transport with several stops at once, so it opens one step at a time: after each shop, tap <b>✓ Done here</b>, then this button again.</small>`;
   const parts = [], pts = [start, ...ordered];
   for(let i = 0; i < pts.length - 1; i += 9) parts.push(pts.slice(i, i + 10));      // 10 points per part, each part starts where the last ended
   return parts.map((pp, k)=>{
     const o = pp[0], d = pp[pp.length - 1], w = pp.slice(1, -1);
-    const href = `https://www.google.com/maps/dir/?api=1&origin=${ll(o)}&destination=${ll(d)}${w.length ? `&waypoints=${w.map(ll).join('|')}` : ''}&travelmode=walking`;
+    const href = `https://www.google.com/maps/dir/?api=1&origin=${ll(o)}&destination=${ll(d)}${w.length ? `&waypoints=${w.map(ll).join('|')}` : ''}&travelmode=${mode==='car' ? 'driving' : 'walking'}`;
     return `<a class="pc-btn${k ? '' : ' pc-main'}" target="_blank" rel="noopener noreferrer" href="${esc(href)}">${GMAPS_SVG}${parts.length > 1 ? `Google Maps, part ${k + 1} of ${parts.length}` : 'Open the route in Google Maps'}</a>`;
   }).join('');
 }
-const gmDir = (a, b, mode)=>`https://www.google.com/maps/dir/?api=1&origin=${a.lat.toFixed(6)},${a.lng.toFixed(6)}&destination=${b.lat.toFixed(6)},${b.lng.toFixed(6)}&travelmode=${mode==='walk' ? 'walking' : 'transit'}`;
+const gmDir = (a, b, mode)=>`https://www.google.com/maps/dir/?api=1&origin=${a.lat.toFixed(6)},${a.lng.toFixed(6)}&destination=${b.lat.toFixed(6)},${b.lng.toFixed(6)}&travelmode=${mode==='walk' ? 'walking' : mode==='car' ? 'driving' : 'transit'}`;
 // ---- searching for a stop: your own places first, then anything on the map ----
 let rtSearchCtl = null;
 // a Google Maps link (or "50.08, 14.42") pasted into the route box: add that exact place as a stop
@@ -7918,8 +7922,9 @@ function renderRoute(){
   box.innerHTML = `
     <div class="rt-head"><b>Plan a route</b><button type="button" class="rt-min" id="rtMin" aria-expanded="${rt.mini ? 'false' : 'true'}">${rt.mini ? 'Show ▴' : 'Smaller ▾'}</button></div>
     <div class="rt-modes" role="radiogroup" aria-label="How you travel">
-      <button type="button" role="radio" data-m="walk" class="${rt.mode==='walk' ? 'on' : ''}" aria-checked="${rt.mode==='walk'}">🚶 Walking</button>
-      <button type="button" role="radio" data-m="transit" class="${rt.mode==='transit' ? 'on' : ''}" aria-checked="${rt.mode==='transit'}">🚇 Public transport</button>
+      <button type="button" role="radio" data-m="walk" class="${rt.mode==='walk' ? 'on' : ''}" aria-checked="${rt.mode==='walk'}">🚶 Walk</button>
+      <button type="button" role="radio" data-m="car" class="${rt.mode==='car' ? 'on' : ''}" aria-checked="${rt.mode==='car'}">🚗 Car</button>
+      <button type="button" role="radio" data-m="transit" class="${rt.mode==='transit' ? 'on' : ''}" aria-checked="${rt.mode==='transit'}" title="Public transport: tram, metro, bus, train">🚇 Transit</button>
     </div>
     <div class="rt-start"><span class="rt-s">${startLine}</span>
       <div class="rt-srcs" role="group" aria-label="Where the route starts">
@@ -7941,13 +7946,13 @@ function renderRoute(){
     <div class="rt-hint">Or tap any of your pins, or any shop on the map, to add it. Tap a numbered pin to take it off.</div>
     ${rt.stops.length ? `<ol class="rt-stops">${rt.start ? `<li class="rt-startrow"><span class="rt-n">▶</span><span class="rt-nm"><b>${rt.startSrc==='gps' ? '📍 Where you are now' : esc(rt.startName || 'The spot you chose on the map')}</b><small>Start</small></span></li>` : ''}${ordered.map((s, i)=>{ const leg = res && res.legs[i];
         const tr = leg && rt.mode==='transit' && leg.tr;
-        return `<li class="${tr ? 'has-tr' : ''}"><span class="rt-n">${i + 1}</span><span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? trLegHtml(tr, i===0) : `<small>${leg ? (rt.mode==='walk' ? `${fmtDur(leg.dur)} walk · ${fmtDist(leg.dist)}${res.est ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
+        return `<li class="${tr ? 'has-tr' : ''}"><span class="rt-n">${i + 1}</span><span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? trLegHtml(tr, i===0) : `<small>${leg ? (roadMode() ? `${fmtDur(leg.dur)} ${rt.mode==='car' ? 'drive' : 'walk'} · ${fmtDist(leg.dist)}${res.est ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
           ${i===0 && res && rt.start ? `<button type="button" class="rt-done" data-done="${esc(s.k)}">✓ Done here</button>` : ''}</span>
-          ${rt.start && res ? `<a class="rt-dir" href="${esc(gmDir(prevOf(i), s, rt.mode))}" target="_blank" rel="noopener noreferrer" title="${rt.mode==='walk' ? 'Walking' : 'Public transport'} directions in Google Maps" aria-label="Directions to ${esc(s.name)}">${GMAPS_SVG}${rt.mode==='walk' ? '' : 'Go'}</a>` : ''}
+          ${rt.start && res ? `<a class="rt-dir" href="${esc(gmDir(prevOf(i), s, rt.mode))}" target="_blank" rel="noopener noreferrer" title="${rt.mode==='walk' ? 'Walking' : rt.mode==='car' ? 'Driving' : 'Public transport'} directions in Google Maps" aria-label="Directions to ${esc(s.name)}">${GMAPS_SVG}${roadMode() ? '' : 'Go'}</a>` : ''}
           <button type="button" class="rt-x" data-rm="${esc(s.k)}" aria-label="Take ${esc(s.name)} off the route" title="Take it off">×</button></li>`; }).join('')}</ol>`
       : '<div class="rt-empty">No stops yet. Add the shops you want to visit, and I’ll work out the quickest order.</div>'}
-    ${res && rt.stops.length ? (rt.mode==='walk'
-        ? `<div class="rt-sum">≈ <b>${fmtDur(res.total.dur)}</b> walking · ${fmtDist(res.total.dist)}${rt.stops.length > 1 ? ', in the quickest order' : ''}.${res.est ? '<small>The walking route service couldn’t be reached, so these are estimates from straight-line distances.</small>' : ''}</div>`
+    ${res && rt.stops.length ? (roadMode()
+        ? `<div class="rt-sum">≈ <b>${fmtDur(res.total.dur)}</b> ${rt.mode==='car' ? 'driving' : 'walking'} · ${fmtDist(res.total.dist)}${rt.stops.length > 1 ? ', in the quickest order' : ''}.${rt.mode==='car' ? '<small>Normal driving times, without live traffic or parking.</small>' : ''}${res.est ? `<small>The ${rt.mode==='car' ? 'driving' : 'walking'} route service couldn’t be reached, so these are estimates from straight-line distances.</small>` : ''}</div>`
         : res.trOk ? `<div class="rt-sum">≈ <b>${fmtDur(Math.max(0, (res.arrive - (res.leave || Date.now())) / 1000))}</b> by public transport${rt.leaveAt ? `, leaving ${esc(fmtWhen(res.leave))}` : ''} · at your last stop around <b>${fmtClock(res.arrive)}</b>.<small>Times for later stops assume you leave as soon as you arrive. When you’re finished at a stop, tap <b>✓ Done here</b> for fresh times from where you are.${res.trOk < res.legs.length ? ' For steps without a connection, tap <b>Go</b> for Google Maps.' : ''}</small><small class="rt-credit">Connections: <a href="https://transitous.org" target="_blank" rel="noopener noreferrer">Transitous</a> · <a href="${TRANSITOUS_SOURCES}" target="_blank" rel="noopener noreferrer">timetable sources</a></small></div>`
         : `<div class="rt-sum">Stops in the shortest order (${fmtDist(res.total.dist)} in all).<small>${HOST ? 'Couldn’t get tram, metro and bus times right now.' : 'Tram, metro and bus times work in the app version (outside Claude).'} Tap <b>Go</b> at each stop for public transport directions in Google Maps.</small></div>`)
       : rt.busy ? '<div class="rt-sum"><span class="busy-spin" aria-hidden="true"></span>Working out the quickest order…</div>'
