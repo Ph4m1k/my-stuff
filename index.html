@@ -1673,7 +1673,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   #placeOverlay{z-index:32;}
   /* route planner */
   .places.route .pl-side > :not(.rt-panel){display:none !important;}
-  .rt-panel{display:none;flex-direction:column;gap:10px;min-height:0;overflow-y:auto;font-family:-apple-system,sans-serif;font-size:0.86rem;padding-bottom:6px;}
+  .rt-panel{display:none;flex-direction:column;gap:10px;min-height:0;overflow-y:auto;scrollbar-gutter:stable;font-family:-apple-system,sans-serif;font-size:0.86rem;padding-bottom:6px;}
   .places.route .rt-panel{display:flex;}
   .rt-panel > *{flex-shrink:0;}
   .nav-extmark{font-size:0.72em;opacity:.6;}                 /* scroll the panel instead of squeezing its parts */
@@ -1690,6 +1690,9 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-start small.err{color:#a13f3f;}
   .rt-mini-btn{border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:4px;padding:4px 9px;font-size:0.76rem;cursor:pointer;}
   .rt-mini-btn.on{border-color:var(--accent);color:var(--accent);font-weight:600;}
+  .rt-srcs{flex-basis:100%;display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:5px;}
+  .rt-srcs .rt-mini-btn{padding:6px 4px;text-align:center;line-height:1.25;overflow-wrap:anywhere;}
+  .rt-shint{flex-basis:100%;color:var(--accent);font-size:0.76rem;font-weight:600;}
   .rt-spick{flex-basis:100%;display:flex;flex-direction:column;gap:4px;margin-top:4px;}
   .rt-spick .rt-sec{margin-top:6px;font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);}
   .rt-spick input{padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);font:inherit;font-size:0.84rem;}
@@ -7919,9 +7922,12 @@ function renderRoute(){
       <button type="button" role="radio" data-m="transit" class="${rt.mode==='transit' ? 'on' : ''}" aria-checked="${rt.mode==='transit'}">🚇 Public transport</button>
     </div>
     <div class="rt-start"><span class="rt-s">${startLine}</span>
-      <button type="button" class="rt-mini-btn${srcOn==='gps' ? ' on' : ''}" aria-pressed="${srcOn==='gps'}" id="rtLocate">Use where I am</button>
-      <button type="button" class="rt-mini-btn${srcOn==='find' ? ' on' : ''}" aria-pressed="${srcOn==='find'}" id="rtPickPlace">Find a place or address</button>
-      <button type="button" class="rt-mini-btn${srcOn==='map' ? ' on' : ''}" aria-pressed="${srcOn==='map'}" id="rtPickStart">${rt.setStart ? 'Now tap the map or a pin…' : 'Choose on the map'}</button>
+      <div class="rt-srcs" role="group" aria-label="Where the route starts">
+        <button type="button" class="rt-mini-btn${srcOn==='gps' ? ' on' : ''}" aria-pressed="${srcOn==='gps'}" id="rtLocate">📍 Where&nbsp;I&nbsp;am</button>
+        <button type="button" class="rt-mini-btn${srcOn==='find' ? ' on' : ''}" aria-pressed="${srcOn==='find'}" id="rtPickPlace">🔎 Find</button>
+        <button type="button" class="rt-mini-btn${srcOn==='map' ? ' on' : ''}" aria-pressed="${srcOn==='map'}" id="rtPickStart">🗺️ On&nbsp;the&nbsp;map</button>
+      </div>
+      ${rt.setStart ? '<small class="rt-shint">Now tap the map, or one of your pins, where you start.</small>' : ''}
       ${rt.locErr ? `<small class="err">${esc(rt.locErr)}</small>` : ''}
       ${rt.startPick ? startPickHTML() : ''}</div>
     ${rt.mode==='transit' ? `<div class="rt-when"><span>🕘 Leave</span>
