@@ -1699,10 +1699,10 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-spick button{display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);text-align:left;cursor:pointer;font:inherit;font-size:0.82rem;}
   .rt-spick button b{display:block;font-weight:600;}
   .rt-spick button small{display:block;color:var(--muted);font-size:0.72rem;}
-  .rt-when{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);}
-  .rt-when > span{font-size:0.84rem;}
-  .rt-when input{padding:4px 6px;border:1px solid var(--line);border-radius:4px;background:var(--paper);color:var(--ink);font:inherit;font-size:0.8rem;color-scheme:light dark;}
-  .rt-when small{flex-basis:100%;color:var(--accent);font-size:0.76rem;font-weight:600;}
+  .rt-leave{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);}
+  .rt-leave > span{font-size:0.84rem;}
+  .rt-leave input{padding:4px 6px;border:1px solid var(--line);border-radius:4px;background:var(--paper);color:var(--ink);font:inherit;font-size:0.8rem;color-scheme:light dark;}
+  .rt-leave small{flex-basis:100%;color:var(--accent);font-size:0.76rem;font-weight:600;}
   .rt-add{display:flex;gap:6px;}
   .rt-add input{flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:4px;background:var(--paper);color:var(--ink);font-size:0.86rem;}
   .rt-res{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:6px;overflow:hidden;max-height:230px;overflow-y:auto;}
@@ -1730,6 +1730,11 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-steps ol{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;}
   .rt-steps li{display:block;padding:0;border:none;background:none;line-height:1.45;}
   .rt-dirn{color:var(--muted);}
+  .rt-live{color:#2f9e55;font-weight:700;font-size:0.7rem;letter-spacing:.02em;}
+  .rt-late{color:#c0392b;font-weight:700;}
+  .rt-early{color:#b07a00;font-weight:600;}
+  .rt-ontime{color:#2f9e55;font-weight:600;font-size:0.72rem;}
+  .rt-plan{color:var(--muted);font-size:0.72rem;}
   .rt-nm .rt-steps b{display:inline;white-space:normal;overflow:visible;font-weight:600;}
   .rt-steps .rt-line{vertical-align:1px;margin-right:2px;}
   .rt-done{align-self:flex-start;margin-top:6px;padding:5px 10px;border:1px solid var(--accent);border-radius:999px;background:var(--accent);color:var(--paper);font:inherit;font-size:0.76rem;cursor:pointer;}
@@ -7602,11 +7607,23 @@ function trChip(l){
   const bg = okColor(l.routeColor), fg = okColor(l.routeTextColor) || '#fff';
   return `<span class="rt-line"${bg ? ` style="background:${bg};color:${fg};border-color:${bg}"` : ''}>${TR_ICON[l.mode] || '🚍'} ${esc(l.displayName || l.routeShortName || TR_NAME[l.mode] || '')}</span>`;
 }
+// live data (PID and others publish where their vehicles really are): how late or early a ride leaves
+function trLate(l){
+  if(!l || l.mode==='WALK' || !l.realTime) return null;
+  const real = Date.parse(l.startTime), plan = Date.parse(l.scheduledStartTime);
+  return isFinite(real) && isFinite(plan) ? Math.round((real - plan) / 60000) : 0;
+}
+function lateHTML(l){
+  const d = trLate(l); if(d==null) return '';
+  return d >= 1 ? ` <span class="rt-late">+${d} min late</span> <s class="rt-plan">${fmtClock(l.scheduledStartTime)}</s>`
+    : d <= -1 ? ` <span class="rt-early">${-d} min early</span>` : ' <span class="rt-ontime">on time</span>';
+}
 // one stop's connection: line chips + times, and the steps
 function trLegHtml(it, open){
   const rides = it.legs.filter(l=>l.mode!=='WALK');
   const chips = rides.length ? rides.map(trChip).join('<span class="rt-arr">›</span>') : '<span class="rt-line">🚶 Walk</span>';
   const ch = it.transfers ? ` · ${it.transfers} ${it.transfers===1 ? 'change' : 'changes'}` : '';
+  const live = rides.some(l=>l.realTime), lateMax = Math.max(0, ...rides.map(l=>trLate(l) || 0));
   const steps = it.legs.map((l, i)=>{
     const last = i===it.legs.length - 1;
     if(l.mode==='WALK'){
@@ -7614,9 +7631,9 @@ function trLegHtml(it, open){
       const to = last ? 'the stop' : esc(l.to && l.to.name || '');
       return `<li>🚶 Walk ${fmtDur(l.duration)} to ${to}</li>`;
     }
-    return `<li>${trChip(l)} <b>${fmtClock(l.startTime)}</b> from ${esc(l.from && l.from.name || '')}${l.headsign ? ` <span class="rt-dirn">(towards ${esc(l.headsign)})</span>` : ''} → <b>${esc(l.to && l.to.name || '')}</b> ${fmtClock(l.endTime)}</li>`;
+    return `<li>${trChip(l)} <b>${fmtClock(l.startTime)}</b>${lateHTML(l)} from ${esc(l.from && l.from.name || '')}${l.headsign ? ` <span class="rt-dirn">(towards ${esc(l.headsign)})</span>` : ''} → <b>${esc(l.to && l.to.name || '')}</b> ${fmtClock(l.endTime)}</li>`;
   }).join('');
-  return `<span class="rt-tr"><span class="rt-chips">${chips}</span><span class="rt-when">${fmtClock(it.startTime)} → ${fmtClock(it.endTime)} · ${fmtDur(it.duration)}${ch}</span>
+  return `<span class="rt-tr"><span class="rt-chips">${chips}</span><span class="rt-when">${live ? '<span class="rt-live" title="Live times from the transport company">● live</span> ' : ''}${fmtClock(it.startTime)} → ${fmtClock(it.endTime)} · ${fmtDur(it.duration)}${ch}${lateMax >= 1 ? ` · <span class="rt-late">delay ${lateMax} min</span>` : ''}</span>
     <details class="rt-steps"${open ? ' open' : ''}><summary>${open ? 'Steps' : 'Show steps'}</summary><ol>${steps}</ol></details></span>`;
 }
 const WALK_KMH = 4.8;
@@ -7935,7 +7952,7 @@ function renderRoute(){
       ${rt.setStart ? '<small class="rt-shint">Now tap the map, or one of your pins, where you start.</small>' : ''}
       ${rt.locErr ? `<small class="err">${esc(rt.locErr)}</small>` : ''}
       ${rt.startPick ? startPickHTML() : ''}</div>
-    ${rt.mode==='transit' ? `<div class="rt-when"><span>🕘 Leave</span>
+    ${rt.mode==='transit' ? `<div class="rt-leave"><span>🕘 Leave</span>
       <button type="button" class="rt-mini-btn${rt.leaveAt ? '' : ' on'}" id="rtNow">Now</button>
       <input type="datetime-local" id="rtWhen" aria-label="Leave at" value="${rt.leaveAt ? localInputValue(rt.leaveAt) : ''}" min="${localInputValue(Date.now())}">
       ${rt.leaveAt ? `<small>${esc(fmtWhen(rt.leaveAt))}</small>` : ''}</div>` : ''}
