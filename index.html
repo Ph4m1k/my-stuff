@@ -1737,6 +1737,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-alert{align-self:stretch;box-sizing:border-box;}
   .rt-alert p{margin:5px 0 4px;color:var(--ink);white-space:pre-line;}
   .rt-alert a{color:var(--accent);font-weight:600;}
+  .rt-why{color:var(--accent);font-size:0.74rem;font-weight:600;}
   .rt-live{color:#2f9e55;font-weight:700;font-size:0.7rem;letter-spacing:.02em;}
   .rt-late{color:#c0392b;font-weight:700;}
   .rt-early{color:#b07a00;font-weight:600;}
@@ -7597,7 +7598,7 @@ function decodePolyline(str, precision){
 }
 // the best connection from a to b leaving at `when` (ms): earliest arrival, a little penalty per change; walking counts too
 async function transitLeg(a, b, when){
-  const u = `${TRANSITOUS}?fromPlace=${(+a.lat).toFixed(6)},${(+a.lng).toFixed(6)}&toPlace=${(+b.lat).toFixed(6)},${(+b.lng).toFixed(6)}&time=${encodeURIComponent(new Date(when).toISOString())}`;
+  const u = `${TRANSITOUS}?fromPlace=${(+a.lat).toFixed(6)},${(+a.lng).toFixed(6)}&toPlace=${(+b.lat).toFixed(6)},${(+b.lng).toFixed(6)}&time=${encodeURIComponent(new Date(when).toISOString())}&maxDirectTime=3600`;   // also say how long just walking takes (up to an hour)
   const j = await fetchJSON(u, 15000);
   const all = [...((j && j.itineraries) || []), ...((j && j.direct) || []).map(x=>({...x, transfers: 0}))]
     .filter(x=>x && x.legs && x.legs.length && Date.parse(x.endTime));
@@ -7606,6 +7607,15 @@ async function transitLeg(a, b, when){
   const blocked = x=>x.legs.some(l=>l.mode!=='WALK' && (l.cancelled || legAlerts(l).some(a=>a.stop)));
   const score = x=>Date.parse(x.endTime) + (x.transfers || 0) * 3 * 60000 + (x.legs.some(l=>l.mode!=='WALK') ? 60000 : 0) + (blocked(x) ? 6 * 3600e3 : 0);
   all.sort((x, y)=>score(x) - score(y));
+  // walking instead: when the stop is close, or the wait for the next tram/bus makes riding barely quicker,
+  // just walk (up to ~25 min of walking, if it gets you there no more than 3 min later than riding)
+  const rides = all.filter(x=>x.legs.some(l=>l.mode!=='WALK') && !blocked(x)), walks = all.filter(x=>x.legs.every(l=>l.mode==='WALK'));
+  const ride = rides[0], walk = walks.sort((x, y)=>Date.parse(x.endTime) - Date.parse(y.endTime))[0];
+  if(walk && ride){
+    const lateBy = Date.parse(walk.endTime) - Date.parse(ride.endTime);
+    if(walk.duration <= 25 * 60 && lateBy <= 3 * 60000) return {...walk, _instead: ride};
+    return lateBy <= 0 ? {...walk, _instead: ride} : ride;
+  }
   return all[0];
 }
 const TR_ICON = {WALK:'🚶', TRAM:'🚋', SUBWAY:'🚇', METRO:'🚇', BUS:'🚌', COACH:'🚌', TROLLEYBUS:'🚎', RAIL:'🚆', REGIONAL_RAIL:'🚆', REGIONAL_FAST_RAIL:'🚆', LONG_DISTANCE:'🚆', HIGHSPEED_RAIL:'🚄', NIGHT_RAIL:'🚆', SUBURBAN:'🚆', FERRY:'⛴️', FUNICULAR:'🚞', CABLE_CAR:'🚡', AERIAL_LIFT:'🚡', AIRPLANE:'✈️'};
@@ -7653,6 +7663,10 @@ function lateHTML(l){
 function trLegHtml(it, open){
   const rides = it.legs.filter(l=>l.mode!=='WALK');
   const chips = rides.length ? rides.map(trChip).join('<span class="rt-arr">›</span>') : '<span class="rt-line">🚶 Walk</span>';
+  // walking won: say why (riding would arrive about the same time, or later, counting the wait)
+  const why = !rides.length && it._instead ? (()=>{ const d = Math.round((Date.parse(it._instead.endTime) - Date.parse(it.endTime)) / 60000);
+    const r = it._instead.legs.filter(l=>l.mode!=='WALK').map(l=>`${TR_NAME[l.mode] || 'ride'} ${l.displayName || l.routeShortName || ''}`.trim()).join(' + ');
+    return `<span class="rt-why">Quicker on foot${d >= 1 ? `: ${r} would get you there ${d} min later` : d <= -1 ? ` (${r} saves only ${-d} min)` : ` (${r} takes as long)`}</span>`; })() : '';
   const ch = it.transfers ? ` · ${it.transfers} ${it.transfers===1 ? 'change' : 'changes'}` : '';
   const live = rides.some(l=>l.realTime), lateMax = Math.max(0, ...rides.map(l=>trLate(l) || 0));
   const steps = it.legs.map((l, i)=>{
@@ -7664,7 +7678,7 @@ function trLegHtml(it, open){
     }
     return `<li>${trChip(l)} <b>${fmtClock(l.startTime)}</b>${lateHTML(l)} from ${esc(l.from && l.from.name || '')}${l.headsign ? ` <span class="rt-dirn">(towards ${esc(l.headsign)})</span>` : ''} → <b>${esc(l.to && l.to.name || '')}</b> ${fmtClock(l.endTime)}</li>`;
   }).join('');
-  return `<span class="rt-tr"><span class="rt-chips">${chips}</span><span class="rt-when">${live ? '<span class="rt-live" title="Live times from the transport company">● live</span> ' : ''}${fmtClock(it.startTime)} → ${fmtClock(it.endTime)} · ${fmtDur(it.duration)}${ch}${lateMax >= 1 ? ` · <span class="rt-late">delay ${lateMax} min</span>` : ''}</span>
+  return `<span class="rt-tr"><span class="rt-chips">${chips}</span><span class="rt-when">${live ? '<span class="rt-live" title="Live times from the transport company">● live</span> ' : ''}${fmtClock(it.startTime)} → ${fmtClock(it.endTime)} · ${fmtDur(it.duration)}${ch}${lateMax >= 1 ? ` · <span class="rt-late">delay ${lateMax} min</span>` : ''}</span>${why}
     ${alertsHTML(it)}
     <details class="rt-steps"${open ? ' open' : ''}><summary>${open ? 'Steps' : 'Show steps'}</summary><ol>${steps}</ol></details></span>`;
 }
