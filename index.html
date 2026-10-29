@@ -1737,6 +1737,13 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-alert{align-self:stretch;box-sizing:border-box;}
   .rt-alert p{margin:5px 0 4px;color:var(--ink);white-space:pre-line;}
   .rt-alert a{color:var(--accent);font-weight:600;}
+  .rt-nav{display:flex;align-items:center;gap:6px;margin:2px 0;font-size:0.74rem;color:var(--muted);}
+  .rt-nav button{padding:3px 8px;border:1px solid var(--line);border-radius:999px;background:var(--paper);color:var(--ink);font:inherit;font-size:0.74rem;cursor:pointer;}
+  .rt-nav button:disabled{opacity:.4;cursor:default;}
+  .rt-steps li.rt-chg{color:var(--muted);font-size:0.72rem;padding-left:2px;}
+  .rt-steps li.rt-chg.tight{color:#b07a00;font-weight:600;}
+  .rt-steps li.rt-chg.bad{color:#c0392b;font-weight:700;}
+  .rt-upd{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:0.76rem;}
   .rt-why{color:var(--accent);font-size:0.74rem;font-weight:600;}
   .rt-live{color:#2f9e55;font-weight:700;font-size:0.7rem;letter-spacing:.02em;}
   .rt-late{color:#c0392b;font-weight:700;}
@@ -7604,19 +7611,88 @@ async function transitLeg(a, b, when){
     .filter(x=>x && x.legs && x.legs.length && Date.parse(x.endTime));
   if(!all.length) return null;
   // a ride that's cancelled, or on a line the transport company says isn't running right now, goes to the back of the queue
-  const blocked = x=>x.legs.some(l=>l.mode!=='WALK' && (l.cancelled || legAlerts(l).some(a=>a.stop)));
+  const blocked = x=>x.legs.some(l=>l.mode!=='WALK' && (l.cancelled || legAlerts(l).some(a=>a.stop))) || changeSlacks(x).some(v=>v != null && v < 0);
   const score = x=>Date.parse(x.endTime) + (x.transfers || 0) * 3 * 60000 + (x.legs.some(l=>l.mode!=='WALK') ? 60000 : 0) + (blocked(x) ? 6 * 3600e3 : 0);
   all.sort((x, y)=>score(x) - score(y));
   // walking instead: when the stop is close, or the wait for the next tram/bus makes riding barely quicker,
   // just walk (up to ~25 min of walking, if it gets you there no more than 3 min later than riding)
   const rides = all.filter(x=>x.legs.some(l=>l.mode!=='WALK') && !blocked(x)), walks = all.filter(x=>x.legs.every(l=>l.mode==='WALK'));
   const ride = rides[0], walk = walks.sort((x, y)=>Date.parse(x.endTime) - Date.parse(y.endTime))[0];
+  let chosen = all[0];
   if(walk && ride){
     const lateBy = Date.parse(walk.endTime) - Date.parse(ride.endTime);
-    if(walk.duration <= 25 * 60 && lateBy <= 3 * 60000) return {...walk, _instead: ride};
-    return lateBy <= 0 ? {...walk, _instead: ride} : ride;
+    chosen = (walk.duration <= 25 * 60 && lateBy <= 3 * 60000) || lateBy <= 0 ? {...walk, _instead: ride} : ride;
   }
-  return all[0];
+  // every connection found (and walking), in the order they leave: you can flip through them like in IDOS
+  const walkOpt = chosen.legs.every(l=>l.mode==='WALK') ? chosen : walk;
+  chosen._opts = sortByDeparture([...all.filter(x=>x.legs.some(l=>l.mode!=='WALK')), ...(walkOpt ? [walkOpt] : [])]);
+  chosen._next = j && j.nextPageCursor || '';
+  return chosen;
+}
+// "‹ Earlier · 2 of 6 · Later ›": flip through the connections for this stop (swiping works too)
+function pickNavHTML(it, leg, idx){
+  const opts = (leg && leg.opts) || [], k = opts.indexOf(it);
+  if(k < 0 || (opts.length < 2 && !leg.next)) return '';
+  return `<span class="rt-nav" data-swipe="${idx}"><button type="button" data-pick="${idx}:-1"${k <= 0 ? ' disabled' : ''} aria-label="Earlier connection">‹ Earlier</button>
+    <span>${leg.loading ? '<span class="busy-spin" aria-hidden="true"></span>' : `${k + 1} of ${opts.length}${leg.next ? '+' : ''}`}</span>
+    <button type="button" data-pick="${idx}:1"${k >= opts.length - 1 && !leg.next ? ' disabled' : ''} aria-label="Later connection">Later ›</button></span>`;
+}
+// you chose another connection for stop i: the stops after it get fresh times from when you'd now arrive
+async function pickConnection(i, dir){
+  const res = rt.res, leg = res && res.legs[i]; if(!leg || !leg.tr || leg.loading) return;
+  let k = (leg.opts || []).indexOf(leg.tr) + dir;
+  if(k >= (leg.opts || []).length && leg.next && leg.a){
+    leg.loading = true; renderRoute();
+    let more = null; try{ more = await transitMore(leg.a, leg.b, leg.when, leg.next); }catch(e){}
+    leg.loading = false;
+    if(rt.res !== res) return;
+    if(more && more.list.length){ const seen = new Set(leg.opts.map(x=>depOf(x) + '|' + x.endTime)); leg.opts = sortByDeparture([...leg.opts, ...more.list.filter(x=>!seen.has(depOf(x) + '|' + x.endTime))]); }
+    leg.next = more ? more.next : '';
+  }
+  const opts = leg.opts || [];
+  if(k < 0 || k >= opts.length){ renderRoute(); return; }
+  leg.tr = opts[k]; leg.dur = leg.tr.duration;
+  const tok = rt.pickTok = {};
+  res.busyFrom = i + 1; rebuildTransit(res); drawRoute(); renderRoute();
+  let t = Date.parse(leg.tr.endTime);
+  for(let j = i + 1; j < res.legs.length; j++){
+    const L = res.legs[j]; if(!L.a) continue;
+    let it = null; try{ it = await transitLeg(L.a, L.b, t); }catch(e){}
+    if(rt.pickTok !== tok || rt.res !== res) return;
+    if(it){ L.tr = it; L.opts = it._opts; L.next = it._next; L.when = t; L.dur = it.duration; t = Date.parse(it.endTime); }
+    else t += L.dist / 1000 / 15 * 3600e3;
+  }
+  res.busyFrom = null; rebuildTransit(res); drawRoute(); renderRoute();
+}
+// the line on the map and the arrival time, from the connections chosen now
+function rebuildTransit(res){
+  const line = []; let t = res.leave || Date.now();
+  res.legs.forEach(L=>{
+    if(L.tr){ L.tr.legs.forEach(l=>{ const g = l.legGeometry && l.legGeometry.points && decodePolyline(l.legGeometry.points, l.legGeometry.precision); if(g && g.length > 1) line.push(...g); }); t = Date.parse(L.tr.endTime); }
+    else if(L.a){ line.push([+L.a.lng, +L.a.lat], [+L.b.lng, +L.b.lat]); t += L.dist / 1000 / 15 * 3600e3; }
+  });
+  if(line.length > 1) res.geom = line;
+  res.arrive = t; res.total.dur = res.legs.reduce((s, l)=>s + l.dur, 0);
+}
+// when a connection leaves: its first ride (walking: when you set off)
+const depOf = x=>{ const r = x.legs.find(l=>l.mode!=='WALK'); return Date.parse((r || x).startTime) || 0; };
+const sortByDeparture = list=>list.slice().sort((x, y)=>depOf(x) - depOf(y) || Date.parse(x.endTime) - Date.parse(y.endTime));
+// more connections after the last one shown (the service pages through them)
+async function transitMore(a, b, when, cursor){
+  const u = `${TRANSITOUS}?fromPlace=${(+a.lat).toFixed(6)},${(+a.lng).toFixed(6)}&toPlace=${(+b.lat).toFixed(6)},${(+b.lng).toFixed(6)}&time=${encodeURIComponent(new Date(when).toISOString())}&maxDirectTime=3600&pageCursor=${encodeURIComponent(cursor)}`;
+  const j = await fetchJSON(u, 15000);
+  return {list: ((j && j.itineraries) || []).filter(x=>x && x.legs && x.legs.length && Date.parse(x.endTime)), next: (j && j.nextPageCursor) || ''};
+}
+// changes inside one connection: minutes to spare between getting off one ride and the next one leaving (walking there counted).
+// Live delays move these, so a change can become tight or be missed ("connection broken")
+function changeSlacks(it){
+  const out = it.legs.map(()=>null); let prev = null, walk = 0;
+  it.legs.forEach((l, k)=>{
+    if(l.mode==='WALK'){ walk += +l.duration || 0; return; }
+    if(prev){ const gap = (Date.parse(l.startTime) - Date.parse(prev.endTime)) / 60000 - walk / 60; if(isFinite(gap)) out[k] = Math.floor(gap); }
+    prev = l; walk = 0;
+  });
+  return out;
 }
 const TR_ICON = {WALK:'🚶', TRAM:'🚋', SUBWAY:'🚇', METRO:'🚇', BUS:'🚌', COACH:'🚌', TROLLEYBUS:'🚎', RAIL:'🚆', REGIONAL_RAIL:'🚆', REGIONAL_FAST_RAIL:'🚆', LONG_DISTANCE:'🚆', HIGHSPEED_RAIL:'🚄', NIGHT_RAIL:'🚆', SUBURBAN:'🚆', FERRY:'⛴️', FUNICULAR:'🚞', CABLE_CAR:'🚡', AERIAL_LIFT:'🚡', AIRPLANE:'✈️'};
 const TR_NAME = {TRAM:'Tram', SUBWAY:'Metro', METRO:'Metro', BUS:'Bus', COACH:'Bus', TROLLEYBUS:'Trolleybus', RAIL:'Train', REGIONAL_RAIL:'Train', REGIONAL_FAST_RAIL:'Train', LONG_DISTANCE:'Train', HIGHSPEED_RAIL:'Train', NIGHT_RAIL:'Night train', SUBURBAN:'Train', FERRY:'Ferry', FUNICULAR:'Funicular', CABLE_CAR:'Cable car', AERIAL_LIFT:'Cable car'};
@@ -7660,7 +7736,7 @@ function lateHTML(l){
     : d <= -1 ? ` <span class="rt-early">${-d} min early</span>` : ' <span class="rt-ontime">on time</span>';
 }
 // one stop's connection: line chips + times, and the steps
-function trLegHtml(it, open){
+function trLegHtml(it, open, leg, idx){
   const rides = it.legs.filter(l=>l.mode!=='WALK');
   const chips = rides.length ? rides.map(trChip).join('<span class="rt-arr">›</span>') : '<span class="rt-line">🚶 Walk</span>';
   // walking won: say why (riding would arrive about the same time, or later, counting the wait)
@@ -7669,16 +7745,19 @@ function trLegHtml(it, open){
     return `<span class="rt-why">Quicker on foot${d >= 1 ? `: ${r} would get you there ${d} min later` : d <= -1 ? ` (${r} saves only ${-d} min)` : ` (${r} takes as long)`}</span>`; })() : '';
   const ch = it.transfers ? ` · ${it.transfers} ${it.transfers===1 ? 'change' : 'changes'}` : '';
   const live = rides.some(l=>l.realTime), lateMax = Math.max(0, ...rides.map(l=>trLate(l) || 0));
+  const slack = changeSlacks(it), broken = slack.some(v=>v != null && v < 0), tight = slack.some(v=>v != null && v >= 0 && v <= 1);
   const steps = it.legs.map((l, i)=>{
     const last = i===it.legs.length - 1;
+    const chg = slack[i]==null ? '' : slack[i] < 0 ? `<li class="rt-chg bad">⚠️ Connection broken: you’d miss it by ${-slack[i]} min</li>`
+      : slack[i] <= 1 ? `<li class="rt-chg tight">⏱ Tight change: ${slack[i]} min</li>` : `<li class="rt-chg">⏱ ${slack[i]} min to change</li>`;
     if(l.mode==='WALK'){
       if(l.duration < 90 && !(i===0 || last)) return '';           // a short walk inside the station
       const to = last ? 'the stop' : esc(l.to && l.to.name || '');
       return `<li>🚶 Walk ${fmtDur(l.duration)} to ${to}</li>`;
     }
-    return `<li>${trChip(l)} <b>${fmtClock(l.startTime)}</b>${lateHTML(l)} from ${esc(l.from && l.from.name || '')}${l.headsign ? ` <span class="rt-dirn">(towards ${esc(l.headsign)})</span>` : ''} → <b>${esc(l.to && l.to.name || '')}</b> ${fmtClock(l.endTime)}</li>`;
+    return `${chg}<li>${trChip(l)} <b>${fmtClock(l.startTime)}</b>${lateHTML(l)} from ${esc(l.from && l.from.name || '')}${l.headsign ? ` <span class="rt-dirn">(towards ${esc(l.headsign)})</span>` : ''} → <b>${esc(l.to && l.to.name || '')}</b> ${fmtClock(l.endTime)}</li>`;
   }).join('');
-  return `<span class="rt-tr"><span class="rt-chips">${chips}</span><span class="rt-when">${live ? '<span class="rt-live" title="Live times from the transport company">● live</span> ' : ''}${fmtClock(it.startTime)} → ${fmtClock(it.endTime)} · ${fmtDur(it.duration)}${ch}${lateMax >= 1 ? ` · <span class="rt-late">delay ${lateMax} min</span>` : ''}</span>${why}
+  return `<span class="rt-tr"><span class="rt-chips">${chips}</span><span class="rt-when">${live ? '<span class="rt-live" title="Live times from the transport company">● live</span> ' : ''}${fmtClock(it.startTime)} → ${fmtClock(it.endTime)} · ${fmtDur(it.duration)}${ch}${lateMax >= 1 ? ` · <span class="rt-late">delay ${lateMax} min</span>` : ''}${broken ? ' · <span class="rt-late">⚠️ change would be missed</span>' : tight ? ' · <span class="rt-early">tight change</span>' : ''}</span>${why}${pickNavHTML(it, leg, idx)}
     ${alertsHTML(it)}
     <details class="rt-steps"${open ? ' open' : ''}><summary>${open ? 'Steps' : 'Show steps'}</summary><ol>${steps}</ol></details></span>`;
 }
@@ -7774,8 +7853,9 @@ async function planRoute(){
       let it = null;
       try{ it = await transitLeg(a, b, t); }catch(e){}
       if(seq !== planSeq || !rt.on) return;
+      legs[i].a = a; legs[i].b = b; legs[i].when = t;
       if(it){
-        legs[i].tr = it; legs[i].dur = it.duration; trOk++;
+        legs[i].tr = it; legs[i].opts = it._opts; legs[i].next = it._next; legs[i].dur = it.duration; trOk++;
         t = Date.parse(it.endTime);
         it.legs.forEach(l=>{ const g = l.legGeometry && l.legGeometry.points && decodePolyline(l.legGeometry.points, l.legGeometry.precision); if(g && g.length > 1) line.push(...g); });
       }else{
@@ -8020,7 +8100,7 @@ function renderRoute(){
     <div class="rt-hint">Or tap any of your pins, or any shop on the map, to add it. Tap a numbered pin to take it off.</div>
     ${rt.stops.length ? `<ol class="rt-stops">${rt.start ? `<li class="rt-startrow"><span class="rt-n">▶</span><span class="rt-nm"><b>${rt.startSrc==='gps' ? '📍 Where you are now' : esc(rt.startName || 'The spot you chose on the map')}</b><small>Start</small></span></li>` : ''}${ordered.map((s, i)=>{ const leg = res && res.legs[i];
         const tr = leg && rt.mode==='transit' && leg.tr;
-        return `<li class="${tr ? 'has-tr' : ''}"><span class="rt-n">${i + 1}</span><span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? trLegHtml(tr, i===0) : `<small>${leg ? (roadMode() ? `${fmtDur(leg.dur)} ${rt.mode==='car' ? 'drive' : 'walk'} · ${fmtDist(leg.dist)}${leg.delay >= 60 ? ` · <span class="rt-late">+${Math.round(leg.delay / 60)} min traffic</span>` : ''}${res.est && !(res.traffic && !res.traffic.failed) ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
+        return `<li class="${tr ? 'has-tr' : ''}"><span class="rt-n">${i + 1}</span><span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? (res.busyFrom != null && i >= res.busyFrom ? '<small class="rt-upd"><span class="busy-spin" aria-hidden="true"></span>Updating times…</small>' : trLegHtml(tr, i===0, leg, res.order[i] != null ? i : i)) : `<small>${leg ? (roadMode() ? `${fmtDur(leg.dur)} ${rt.mode==='car' ? 'drive' : 'walk'} · ${fmtDist(leg.dist)}${leg.delay >= 60 ? ` · <span class="rt-late">+${Math.round(leg.delay / 60)} min traffic</span>` : ''}${res.est && !(res.traffic && !res.traffic.failed) ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
           ${i===0 && res && rt.start ? `<button type="button" class="rt-done" data-done="${esc(s.k)}">✓ Done here</button>` : ''}</span>
           ${rt.start && res ? `<a class="rt-dir" href="${esc(gmDir(prevOf(i), s, rt.mode))}" target="_blank" rel="noopener noreferrer" title="${rt.mode==='walk' ? 'Walking' : rt.mode==='car' ? 'Driving' : 'Public transport'} directions in Google Maps" aria-label="Directions to ${esc(s.name)}">${GMAPS_SVG}${roadMode() ? '' : 'Go'}</a>` : ''}
           <button type="button" class="rt-x" data-rm="${esc(s.k)}" aria-label="Take ${esc(s.name)} off the route" title="Take it off">×</button></li>`; }).join('')}</ol>`
@@ -8064,6 +8144,14 @@ function renderRoute(){
   box.querySelectorAll('[data-add]').forEach(b=>b.onclick = ()=>{ const [kind, i] = b.dataset.add.split(':'); const r = (kind==='m' ? R.mine : R.found)[+i]; if(r) addStop(r); });
   box.querySelectorAll('[data-rm]').forEach(b=>b.onclick = ()=>removeStop(b.dataset.rm));
   box.querySelectorAll('[data-done]').forEach(b=>b.onclick = ()=>doneHere(b.dataset.done));
+  box.querySelectorAll('[data-pick]').forEach(b=>b.onclick = e=>{ e.preventDefault(); const [i, d] = b.dataset.pick.split(':').map(Number); pickConnection(i, d); });
+  box.querySelectorAll('.rt-stops > li.has-tr').forEach(li=>{
+    const nav = li.querySelector('[data-swipe]'); if(!nav) return;
+    const i = +nav.dataset.swipe; let x0 = null, y0 = 0;
+    li.addEventListener('touchstart', e=>{ const t = e.touches[0]; x0 = t.clientX; y0 = t.clientY; }, {passive: true});
+    li.addEventListener('touchend', e=>{ if(x0==null) return; const t = e.changedTouches[0], dx = t.clientX - x0, dy = t.clientY - y0; x0 = null;
+      if(Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) pickConnection(i, dx < 0 ? 1 : -1); }, {passive: true});
+  });
   const clr = box.querySelector('#rtClear'); if(clr) clr.onclick = ()=>{
     const before = rt.stops.slice(); rt.stops = []; saveRt(); stopsChanged();
     offerUndo('Cleared your route.', async ()=>{ rt.stops = before; saveRt(); stopsChanged(); });
