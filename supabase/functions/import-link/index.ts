@@ -573,6 +573,37 @@ const withTimeout = (fn: typeof fetch, ms: number) => ((input: any, init: any = 
   return fn(input, { ...init, signal: c.signal }).finally(() => clearTimeout(t));
 }) as typeof fetch;
 
+// ---------------- car times with live traffic (TomTom), for the route planner ----------------
+// points: the start, then the stops in the order the app chose. Returns each leg's time (with traffic), the traffic delay,
+// the length, and the road line to draw. One TomTom request per plan.
+export async function carTraffic(points: unknown, key: string, fetchFn: typeof fetch) {
+  if (!key) return { ok: false, error: 'Traffic is not set up (TOMTOM_KEY missing).' };
+  const pts = (Array.isArray(points) ? points : []).map((p: any) => ({ lat: +p?.lat, lng: +p?.lng }))
+    .filter((p) => isFinite(p.lat) && isFinite(p.lng) && Math.abs(p.lat) <= 90 && Math.abs(p.lng) <= 180);
+  if (pts.length < 2 || pts.length > 16) return { ok: false, error: 'Need 2 to 16 points.' };
+  const loc = pts.map((p) => `${p.lat.toFixed(6)},${p.lng.toFixed(6)}`).join(':');
+  const u = `https://api.tomtom.com/routing/1/calculateRoute/${loc}/json?key=${encodeURIComponent(key)}&traffic=true&travelMode=car&departAt=now&routeRepresentation=polyline&computeTravelTimeFor=all`;
+  let r: Response;
+  try { r = await fetchFn(u, { headers: { 'Accept': 'application/json' } }); } catch (_) { return { ok: false, error: "Couldn't reach TomTom." }; }
+  let j: any = null; try { j = await r.json(); } catch (_) { /* below */ }
+  if (!r.ok || !j || !Array.isArray(j.routes) || !j.routes.length) {
+    const msg = j && (j.detailedError?.message || j.error?.description || j.errorText);
+    return { ok: false, error: `TomTom said no${r.status ? ` (${r.status})` : ''}${msg ? `: ${String(msg).slice(0, 160)}` : ''}.` };
+  }
+  const route = j.routes[0], num = (v: unknown) => (isFinite(+(v as number)) ? +(v as number) : 0);
+  const legs = (route.legs || []).map((l: any) => ({
+    dur: num(l.summary?.travelTimeInSeconds), delay: num(l.summary?.trafficDelayInSeconds),
+    free: num(l.summary?.noTrafficTravelTimeInSeconds), dist: num(l.summary?.lengthInMeters),
+  }));
+  // the road line, thinned to at most ~1500 points so the answer stays small
+  const all: number[][] = [];
+  for (const l of route.legs || []) for (const q of l.points || []) if (isFinite(+q.latitude) && isFinite(+q.longitude)) all.push([+(+q.longitude).toFixed(6), +(+q.latitude).toFixed(6)]);
+  const step = Math.max(1, Math.ceil(all.length / 1500));
+  const geom = all.filter((_, i) => i % step === 0 || i === all.length - 1);
+  const s = route.summary || {};
+  return { ok: true, legs, geom, total: { dur: num(s.travelTimeInSeconds), delay: num(s.trafficDelayInSeconds), dist: num(s.lengthInMeters) } };
+}
+
 export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fetch): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   fetchFn = withTimeout(fetchFn, 25000);
@@ -599,6 +630,7 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
     kind = String(j.kind || ''); cats = Array.isArray(j.categories) ? j.categories.map(String).slice(0, 60) : [];
     pasted = String(j.pageText || '').slice(0, 60000); safeUrl = String(j.url || '');
   } catch (_) { /* plain text */ }
+  if (kind === 'traffic') { let pts: unknown = null; try { pts = JSON.parse(raw).points; } catch (_) { /* below */ } return reply(await carTraffic(pts, env.get('TOMTOM_KEY') || '', fetchFn)); }
   const link = (/https?:\/\/[^\s"'<>]+/.exec(String(kind === 'product' ? (pasted ? safeUrl : text) : text)) || [])[0] || '';
   if (kind === 'product' && !link && pasted) return reply(await readProduct('', cats, env.get('ANTHROPIC_API_KEY') || '', fetchFn, pasted));
   if (!link) return reply({ ok: false, error: 'No link found.' }, 400);

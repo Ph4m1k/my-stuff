@@ -7707,7 +7707,18 @@ async function planRoute(){
       if(r){ geom = r.geometry && r.geometry.coordinates; (r.legs || []).forEach((l, i)=>{ if(legs[i]){ legs[i].dur = l.duration; legs[i].dist = l.distance; } }); }
     }catch(e){}
   }
-  let trOk = 0, arrive = 0, leave = 0;
+  let trOk = 0, arrive = 0, leave = 0, traffic = null;
+  if(rt.mode==='car' && HOST && HOST.importLink){
+    // live traffic: TomTom, asked through your Supabase (the key stays there); the order stays the one worked out above
+    let t = null;
+    try{ t = await Promise.race([HOST.importLink('', {kind: 'traffic', points: [0, ...order].map(j=>({lat: +pts[j].lat, lng: +pts[j].lng}))}), new Promise(ok=>setTimeout(()=>ok(null), 15000))]); }catch(e){}
+    if(seq !== planSeq || !rt.on) return;
+    if(t && t.ok && Array.isArray(t.legs) && t.legs.length===legs.length){
+      t.legs.forEach((l, i)=>{ legs[i].dur = l.dur; legs[i].dist = l.dist || legs[i].dist; legs[i].delay = l.delay || 0; });
+      if(Array.isArray(t.geom) && t.geom.length > 1) geom = t.geom;
+      traffic = {delay: legs.reduce((s, l)=>s + (l.delay || 0), 0)};
+    }else traffic = {failed: true, why: (t && t.error) || ''};
+  }
   if(rt.mode==='transit' && HOST){
     // each step leaves when the one before arrives; ✓ Done here asks again from where you really are
     const way = [0, ...order], line = []; let t = rt.leaveAt && rt.leaveAt > Date.now() ? rt.leaveAt : Date.now();
@@ -7730,7 +7741,7 @@ async function planRoute(){
     arrive = t;
   }
   if(key !== routeKey()) return;
-  rt.res = {order, legs, est, geom, key, trOk, arrive, leave, total: {dur: legs.reduce((s, l)=>s + l.dur, 0), dist: legs.reduce((s, l)=>s + l.dist, 0)}};
+  rt.res = {order, legs, est, geom, key, trOk, arrive, leave, traffic, total: {dur: legs.reduce((s, l)=>s + l.dur, 0), dist: legs.reduce((s, l)=>s + l.dist, 0)}};
   rt.busy = false;
   drawRoute(); renderPlaces(); fitRoute();
 }
@@ -7963,13 +7974,15 @@ function renderRoute(){
     <div class="rt-hint">Or tap any of your pins, or any shop on the map, to add it. Tap a numbered pin to take it off.</div>
     ${rt.stops.length ? `<ol class="rt-stops">${rt.start ? `<li class="rt-startrow"><span class="rt-n">▶</span><span class="rt-nm"><b>${rt.startSrc==='gps' ? '📍 Where you are now' : esc(rt.startName || 'The spot you chose on the map')}</b><small>Start</small></span></li>` : ''}${ordered.map((s, i)=>{ const leg = res && res.legs[i];
         const tr = leg && rt.mode==='transit' && leg.tr;
-        return `<li class="${tr ? 'has-tr' : ''}"><span class="rt-n">${i + 1}</span><span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? trLegHtml(tr, i===0) : `<small>${leg ? (roadMode() ? `${fmtDur(leg.dur)} ${rt.mode==='car' ? 'drive' : 'walk'} · ${fmtDist(leg.dist)}${res.est ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
+        return `<li class="${tr ? 'has-tr' : ''}"><span class="rt-n">${i + 1}</span><span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? trLegHtml(tr, i===0) : `<small>${leg ? (roadMode() ? `${fmtDur(leg.dur)} ${rt.mode==='car' ? 'drive' : 'walk'} · ${fmtDist(leg.dist)}${leg.delay >= 60 ? ` · <span class="rt-late">+${Math.round(leg.delay / 60)} min traffic</span>` : ''}${res.est && !(res.traffic && !res.traffic.failed) ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
           ${i===0 && res && rt.start ? `<button type="button" class="rt-done" data-done="${esc(s.k)}">✓ Done here</button>` : ''}</span>
           ${rt.start && res ? `<a class="rt-dir" href="${esc(gmDir(prevOf(i), s, rt.mode))}" target="_blank" rel="noopener noreferrer" title="${rt.mode==='walk' ? 'Walking' : rt.mode==='car' ? 'Driving' : 'Public transport'} directions in Google Maps" aria-label="Directions to ${esc(s.name)}">${GMAPS_SVG}${roadMode() ? '' : 'Go'}</a>` : ''}
           <button type="button" class="rt-x" data-rm="${esc(s.k)}" aria-label="Take ${esc(s.name)} off the route" title="Take it off">×</button></li>`; }).join('')}</ol>`
       : '<div class="rt-empty">No stops yet. Add the shops you want to visit, and I’ll work out the quickest order.</div>'}
     ${res && rt.stops.length ? (roadMode()
-        ? `<div class="rt-sum">≈ <b>${fmtDur(res.total.dur)}</b> ${rt.mode==='car' ? 'driving' : 'walking'} · ${fmtDist(res.total.dist)}${rt.stops.length > 1 ? ', in the quickest order' : ''}.${rt.mode==='car' ? '<small>Normal driving times, without live traffic or parking.</small>' : ''}${res.est ? `<small>The ${rt.mode==='car' ? 'driving' : 'walking'} route service couldn’t be reached, so these are estimates from straight-line distances.</small>` : ''}</div>`
+        ? `<div class="rt-sum">≈ <b>${fmtDur(res.total.dur)}</b> ${rt.mode==='car' ? 'driving' : 'walking'} · ${fmtDist(res.total.dist)}${rt.stops.length > 1 ? ', in the quickest order' : ''}.${rt.mode==='car' ? (res.traffic && !res.traffic.failed
+        ? `<small>${res.traffic.delay >= 60 ? `Includes about <b class="rt-late">${fmtDur(res.traffic.delay)}</b> of traffic right now.` : 'Traffic is light right now.'} Parking not included.</small><small class="rt-credit">Live traffic: TomTom</small>`
+        : `<small>Normal driving times, without live traffic${res.traffic && res.traffic.failed ? ' (traffic couldn’t be checked just now)' : ''}. Parking not included.</small>`) : ''}${res.est && !(res.traffic && !res.traffic.failed) ? `<small>The ${rt.mode==='car' ? 'driving' : 'walking'} route service couldn’t be reached, so these are estimates from straight-line distances.</small>` : ''}</div>`
         : res.trOk ? `<div class="rt-sum">≈ <b>${fmtDur(Math.max(0, (res.arrive - (res.leave || Date.now())) / 1000))}</b> by public transport${rt.leaveAt ? `, leaving ${esc(fmtWhen(res.leave))}` : ''} · at your last stop around <b>${fmtClock(res.arrive)}</b>.<small>Times for later stops assume you leave as soon as you arrive. When you’re finished at a stop, tap <b>✓ Done here</b> for fresh times from where you are.${res.trOk < res.legs.length ? ' For steps without a connection, tap <b>Go</b> for Google Maps.' : ''}</small><small class="rt-credit">Connections: <a href="https://transitous.org" target="_blank" rel="noopener noreferrer">Transitous</a> · <a href="${TRANSITOUS_SOURCES}" target="_blank" rel="noopener noreferrer">timetable sources</a></small></div>`
         : `<div class="rt-sum">Stops in the shortest order (${fmtDist(res.total.dist)} in all).<small>${HOST ? 'Couldn’t get tram, metro and bus times right now.' : 'Tram, metro and bus times work in the app version (outside Claude).'} Tap <b>Go</b> at each stop for public transport directions in Google Maps.</small></div>`)
       : rt.busy ? '<div class="rt-sum"><span class="busy-spin" aria-hidden="true"></span>Working out the quickest order…</div>'
