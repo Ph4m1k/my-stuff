@@ -1730,6 +1730,13 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-steps ol{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;}
   .rt-steps li{display:block;padding:0;border:none;background:none;line-height:1.45;}
   .rt-dirn{color:var(--muted);}
+  .rt-alert{margin:3px 0 1px;padding:5px 8px;border-radius:6px;border:1px solid #d9a400;background:color-mix(in srgb, #d9a400 12%, transparent);font-size:0.74rem;line-height:1.35;}
+  .rt-alert.stop{border-color:#c0392b;background:color-mix(in srgb, #c0392b 12%, transparent);}
+  .rt-alert summary{cursor:pointer;}
+  .rt-nm .rt-alert b{display:inline;white-space:normal;overflow:visible;}
+  .rt-alert{align-self:stretch;box-sizing:border-box;}
+  .rt-alert p{margin:5px 0 4px;color:var(--ink);white-space:pre-line;}
+  .rt-alert a{color:var(--accent);font-weight:600;}
   .rt-live{color:#2f9e55;font-weight:700;font-size:0.7rem;letter-spacing:.02em;}
   .rt-late{color:#c0392b;font-weight:700;}
   .rt-early{color:#b07a00;font-weight:600;}
@@ -7595,7 +7602,9 @@ async function transitLeg(a, b, when){
   const all = [...((j && j.itineraries) || []), ...((j && j.direct) || []).map(x=>({...x, transfers: 0}))]
     .filter(x=>x && x.legs && x.legs.length && Date.parse(x.endTime));
   if(!all.length) return null;
-  const score = x=>Date.parse(x.endTime) + (x.transfers || 0) * 3 * 60000 + (x.legs.some(l=>l.mode!=='WALK') ? 60000 : 0);
+  // a ride that's cancelled, or on a line the transport company says isn't running right now, goes to the back of the queue
+  const blocked = x=>x.legs.some(l=>l.mode!=='WALK' && (l.cancelled || legAlerts(l).some(a=>a.stop)));
+  const score = x=>Date.parse(x.endTime) + (x.transfers || 0) * 3 * 60000 + (x.legs.some(l=>l.mode!=='WALK') ? 60000 : 0) + (blocked(x) ? 6 * 3600e3 : 0);
   all.sort((x, y)=>score(x) - score(y));
   return all[0];
 }
@@ -7606,6 +7615,28 @@ const okColor = c=>/^[0-9a-f]{6}$/i.test(c || '') ? '#' + c : '';
 function trChip(l){
   const bg = okColor(l.routeColor), fg = okColor(l.routeTextColor) || '#fff';
   return `<span class="rt-line"${bg ? ` style="background:${bg};color:${fg};border-color:${bg}"` : ''}>${TR_ICON[l.mode] || '🚍'} ${esc(l.displayName || l.routeShortName || TR_NAME[l.mode] || '')}</span>`;
+}
+// notices from the transport company about a ride's line (accidents, closures, diversions, road works) that apply when you ride
+function legAlerts(l){
+  const t = Date.parse(l.startTime) || Date.now(), seen = new Set(), out = [];
+  for(const a of (Array.isArray(l.alerts) ? l.alerts : [])){
+    const head = String(a.headerText || '').trim(); if(!head || seen.has(head)) continue;
+    const per = Array.isArray(a.impactPeriod) ? a.impactPeriod : [];
+    const now = !per.length || per.some(p=>{ const st = Date.parse(p.start), en = Date.parse(p.end); return (!isFinite(st) || st <= t + 30 * 60e3) && (!isFinite(en) || en < 864e5 || en >= t); });
+    if(!now) continue;
+    seen.add(head);
+    out.push({head, text: String(a.descriptionText || '').trim(), url: /^https:\/\//.test(a.url || '') ? a.url : '',
+              stop: a.effect==='NO_SERVICE' || a.severityLevel==='SEVERE'});
+  }
+  return out;
+}
+function alertsHTML(it){
+  const list = [], seen = new Set();
+  for(const l of it.legs) if(l.mode!=='WALK'){
+    if(l.cancelled && !seen.has('x' + l.tripId)){ seen.add('x' + l.tripId); list.push({head: `${TR_NAME[l.mode] || 'Ride'} ${l.displayName || l.routeShortName || ''} is cancelled`, stop: true}); }
+    for(const a of legAlerts(l)) if(!seen.has(a.head)){ seen.add(a.head); list.push({...a, line: `${TR_ICON[l.mode] || '🚍'} ${l.displayName || l.routeShortName || ''}`}); }
+  }
+  return list.slice(0, 4).map(a=>`<details class="rt-alert${a.stop ? ' stop' : ''}"><summary>⚠️ ${a.line ? `<b>${esc(a.line)}</b> · ` : ''}${esc(a.head)}</summary>${a.text ? `<p>${esc(a.text.slice(0, 600))}</p>` : ''}${a.url ? `<a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">More at pid.cz ↗</a>` : ''}</details>`).join('');
 }
 // live data (PID and others publish where their vehicles really are): how late or early a ride leaves
 function trLate(l){
@@ -7634,6 +7665,7 @@ function trLegHtml(it, open){
     return `<li>${trChip(l)} <b>${fmtClock(l.startTime)}</b>${lateHTML(l)} from ${esc(l.from && l.from.name || '')}${l.headsign ? ` <span class="rt-dirn">(towards ${esc(l.headsign)})</span>` : ''} → <b>${esc(l.to && l.to.name || '')}</b> ${fmtClock(l.endTime)}</li>`;
   }).join('');
   return `<span class="rt-tr"><span class="rt-chips">${chips}</span><span class="rt-when">${live ? '<span class="rt-live" title="Live times from the transport company">● live</span> ' : ''}${fmtClock(it.startTime)} → ${fmtClock(it.endTime)} · ${fmtDur(it.duration)}${ch}${lateMax >= 1 ? ` · <span class="rt-late">delay ${lateMax} min</span>` : ''}</span>
+    ${alertsHTML(it)}
     <details class="rt-steps"${open ? ' open' : ''}><summary>${open ? 'Steps' : 'Show steps'}</summary><ol>${steps}</ol></details></span>`;
 }
 const WALK_KMH = 4.8;
