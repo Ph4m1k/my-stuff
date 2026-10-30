@@ -1800,6 +1800,12 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pm-emo .play-ic{width:13px;height:13px;}
   .rt-startrow .rt-ic{flex:0 0 auto;font-size:1rem;line-height:1;align-self:center;}
   .rt-startrow .rt-n{font-size:0.62rem;padding-left:1px;}
+  .rt-n.none{background:none;border:2px dashed var(--accent);opacity:.75;}
+  .rt-fix{flex:0 0 auto;border:1px solid transparent;background:none;cursor:pointer;padding:2px 5px;border-radius:4px;font-size:0.85rem;line-height:1;filter:grayscale(1);opacity:.35;}
+  .rt-fix:hover{opacity:.8;}
+  .rt-fix.on{filter:none;opacity:1;border-color:var(--accent);}
+  .rt-stops li.fixed{border-color:color-mix(in srgb, var(--accent) 55%, var(--line));}
+  .pm-nodot{display:block;width:8px;height:8px;border-radius:50%;background:currentColor;}
   .rt-x{flex:0 0 auto;border:none;background:none;color:var(--muted);font-size:1.1rem;cursor:pointer;padding:0 4px;}
   .rt-sum{padding:8px 10px;border-radius:6px;background:color-mix(in srgb, var(--accent) 10%, transparent);font-size:0.84rem;}
   .rt-sum small{display:block;color:var(--muted);font-size:0.74rem;margin-top:3px;}
@@ -2828,7 +2834,7 @@ const RT_KEY = 'route-plan';
 const rt = {on:false, stops:[], mode:'walk', start:null, startSrc:'', locating:false, locErr:'', setStart:false,
             res:null, busy:false, err:'', q:'', results:null, searching:false, mini:false};
 try{ const sv = JSON.parse(localStorage.getItem(RT_KEY) || 'null');
-  if(sv){ rt.stops = (sv.stops || []).filter(x=>x && validLatLng(x.lat, x.lng)).slice(0, 12); rt.mode = sv.mode==='transit' || sv.mode==='car' ? sv.mode : 'walk'; } }catch(e){}
+  if(sv){ rt.stops = (sv.stops || []).filter(x=>x && validLatLng(x.lat, x.lng)).slice(0, 12); rt.mode = sv.mode==='transit' || sv.mode==='car' ? sv.mode : 'walk'; rt.stops = rt.stops.filter(x=>x.fixed).concat(rt.stops.filter(x=>!x.fixed)); } }catch(e){}
 
 
 // ---------- Browsing: search, sort, filters (kept per module, per browser) ----------
@@ -7528,7 +7534,9 @@ async function removeInbox(it){
 // ================= Route planner: the quickest way past several shops =================
 // Start where you are, visit every stop, finish at the last one. Walking times come from a free OpenStreetMap
 // route service; for public transport the stops are put in order by distance and each step opens Google Maps.
-function saveRt(){ try{ localStorage.setItem(RT_KEY, JSON.stringify({stops: rt.stops, mode: rt.mode})); }catch(e){} updateNavCounts(); }
+// stops you pinned (📌) stay at the front of the list, in the order you pinned them; the rest follow
+function tidyStops(){ const f = rt.stops.filter(x=>x.fixed), r = rt.stops.filter(x=>!x.fixed); rt.stops = f.concat(r); }
+function saveRt(){ tidyStops(); try{ localStorage.setItem(RT_KEY, JSON.stringify({stops: rt.stops, mode: rt.mode})); }catch(e){} updateNavCounts(); }
 function setRtOpen(on){ rtOpen = !!on; try{ localStorage.setItem(RT_OPEN_KEY, rtOpen ? '1' : '0'); }catch(e){} }
 function toggleRoute(force){
   if(currentMod!=='places') return;
@@ -7584,6 +7592,15 @@ function addStop(st){
   saveRt(); stopsChanged();                                   // the search stays open: pick as many of the results as you like
   toast(rt.on ? `Added “${st.name || 'stop'}” to your route.` : `Added “${st.name || 'stop'}” to your route (${rt.stops.length} ${rt.stops.length===1 ? 'stop' : 'stops'}). Tap 🧭 Route to plan it.`);
 }
+// 📌 "go here first": pinned stops are visited first, in the order you pin them; the rest get the quickest order after them
+function toggleFixed(k){
+  const i = rt.stops.findIndex(x=>x.k===k); if(i < 0) return;
+  const [s] = rt.stops.splice(i, 1), nf = rt.stops.filter(x=>x.fixed).length;
+  s.fixed = !s.fixed;
+  rt.stops.splice(nf, 0, s);                                  // pinning: joins the end of the pinned ones; unpinning: first of the rest
+  saveRt();
+  if(rt.asked){ rt.res = null; planSoon(true); drawRoute(); renderPlaces(); } else { drawRoute(); renderPlaces(); }
+}
 function removeStop(k){
   const i = rt.stops.findIndex(x=>x.k===k); if(i < 0) return;
   const [gone] = rt.stops.splice(i, 1); saveRt(); stopsChanged();
@@ -7627,7 +7644,8 @@ function routePinTapped(id){
 }
 function stopNumber(k){
   if(rt.res && rt.res.key===routeKey()){ const i = rt.res.order.findIndex(j=>rt.stops[j - 1] && rt.stops[j - 1].k===k); if(i >= 0) return i + 1; }
-  return rt.stops.findIndex(x=>x.k===k) + 1;
+  const s = rt.stops.find(x=>x.k===k);
+  return s && s.fixed ? rt.stops.findIndex(x=>x.k===k) + 1 : '';   // not planned yet: only the pinned ones have a known place in the order
 }
 // the little card above a pin when you point at it (computer): name, address, and what a click does
 function pinTip(name, addr, what){
@@ -7641,13 +7659,13 @@ function routeMarkers(){
   places.filter(p=>validLatLng(p.lat, p.lng)).forEach(p=>{
     if(pinStart && sameSpot(p, rt.start)) return;            // your place is the start: the start pin stands in for it
     const st = rt.stops.find(x=>x.placeId===p.id);
-    out.push(st ? {id: p.id, lat: p.lat, lng: p.lng, label: `Stop ${stopNumber(st.k)}: ${p.name || ''}`, cls: 'stop', pc: 'var(--accent)',
-                   html: `<span class="pm-dot"><span class="pm-emo">${stopNumber(st.k)}</span></span><span class="pm-name">${esc(p.name || '')}</span>${pinTip(p.name, placeAddr(p), rt.setStart ? 'Click to start here' : `Stop ${stopNumber(st.k)} · click to take it off`)}`}
+    out.push(st ? {id: p.id, lat: p.lat, lng: p.lng, label: `Stop ${stopNumber(st.k)}${stopNumber(st.k) ? ':' : ''} ${p.name || ''}`, cls: 'stop', pc: 'var(--accent)',
+                   html: `<span class="pm-dot"><span class="pm-emo">${stopNumber(st.k) || '<i class="pm-nodot"></i>'}</span></span><span class="pm-name">${esc(p.name || '')}</span>${pinTip(p.name, placeAddr(p), rt.setStart ? 'Click to start here' : `${stopNumber(st.k) ? `Stop ${stopNumber(st.k)}` : 'On your route'} · click to take it off`)}`}
               : {id: p.id, lat: p.lat, lng: p.lng, label: `${p.name || 'Place'} (tap to add to your route)`, cls: hits.has(p.id) ? 'hit' : searching ? 'dim faint' : 'dim', pc: `var(--nc-${placeColor(p)})`,
                  html: `<span class="pm-dot"><span class="pm-emo">${esc(placeEmoji(p))}</span></span>${hits.has(p.id) ? `<span class="pm-name">${esc(p.name || '')}</span>` : ''}${pinTip(p.name, placeAddr(p), rt.setStart ? 'Click to start here' : 'Click to add to your route')}`});
   });
-  rt.stops.filter(s=>!s.placeId || !places.some(p=>p.id===s.placeId)).forEach(s=>out.push({id: '__stop_' + s.k, lat: s.lat, lng: s.lng, label: `Stop ${stopNumber(s.k)}: ${s.name}`, cls: 'stop', pc: 'var(--accent)',
-    html: `<span class="pm-dot"><span class="pm-emo">${stopNumber(s.k)}</span></span><span class="pm-name">${esc(s.name)}</span>${pinTip(s.name, '', `Stop ${stopNumber(s.k)} · click to take it off`)}`}));
+  rt.stops.filter(s=>!s.placeId || !places.some(p=>p.id===s.placeId)).forEach(s=>out.push({id: '__stop_' + s.k, lat: s.lat, lng: s.lng, label: `Stop ${stopNumber(s.k)}${stopNumber(s.k) ? ':' : ''} ${s.name}`, cls: 'stop', pc: 'var(--accent)',
+    html: `<span class="pm-dot"><span class="pm-emo">${stopNumber(s.k) || '<i class="pm-nodot"></i>'}</span></span><span class="pm-name">${esc(s.name)}</span>${pinTip(s.name, '', `${stopNumber(s.k) ? `Stop ${stopNumber(s.k)}` : 'On your route'} · click to take it off`)}`}));
   // what you searched for, as pins (all the Lidls in view…): tap to add
   const R = rt.results && rt.results.found;
   if(R) R.forEach((r, i)=>{ if(!validLatLng(r.lat, r.lng) || rt.stops.some(x=>sameSpot(x, r)) || places.some(p=>validLatLng(p.lat, p.lng) && sameSpot(p, r))) return;
@@ -7856,7 +7874,15 @@ function straightMatrix(pts){
   return {dist, dur: dist.map(r=>r.map(d=>d / ((rt.mode==='car' ? CAR_KMH : WALK_KMH) / 3.6)))};
 }
 // the best order: try every order for up to 8 stops; for more, start with the nearest each time and keep improving
-function bestOrder(c){
+// nf: the first nf stops are pinned, so they go first in that order and only the rest are sorted (starting from the last pinned one)
+function bestOrder(c, nf){
+  nf = Math.min(nf || 0, c.length - 1);
+  if(nf > 0){
+    const pre = Array.from({length: nf}, (_, i)=>i + 1), rest = Array.from({length: c.length - 1 - nf}, (_, i)=>i + 1 + nf);
+    if(!rest.length) return pre;
+    const ids = [nf, ...rest], sub = ids.map(a=>ids.map(b=>c[a][b]));
+    return pre.concat(bestOrder(sub, 0).map(j=>ids[j]));
+  }
   const n = c.length - 1; if(n <= 0) return [];
   const idx = Array.from({length: n}, (_, i)=>i + 1);
   const len = o=>o.reduce((s, j, i)=>s + c[i ? o[i - 1] : 0][j], 0);
@@ -7898,7 +7924,7 @@ async function planRoute(){
   try{ M = await walkMatrix(pts); }catch(e){ M = null; }
   if(seq !== planSeq || !rt.on) return;
   if(!M){ M = straightMatrix(pts); est = true; }
-  const order = bestOrder(roadMode() ? M.dur : M.dist);
+  const order = bestOrder(roadMode() ? M.dur : M.dist, rt.stops.filter(x=>x.fixed).length);
   const legs = order.map((j, i)=>{ const a = i ? order[i - 1] : 0; return {from: a, to: j, dur: M.dur[a][j], dist: M.dist[a][j]}; });
   let geom = null;
   if(roadMode() && !est){
@@ -7949,7 +7975,7 @@ async function planRoute(){
   rt.busy = false;
   drawRoute(); renderPlaces(); fitRoute();
 }
-const routeKey = ()=>JSON.stringify([rt.mode, rt.start && [rt.start.lat.toFixed(5), rt.start.lng.toFixed(5)], rt.stops.map(s=>s.k), rt.mode==='transit' ? rt.leaveAt || 0 : 0]);
+const routeKey = ()=>JSON.stringify([rt.mode, rt.start && [rt.start.lat.toFixed(5), rt.start.lng.toFixed(5)], rt.stops.map(s=>s.k + (s.fixed ? '!' : '')), rt.mode==='transit' ? rt.leaveAt || 0 : 0]);
 function drawRoute(){
   if(!plMap || !plMap.setRoute) return;
   if(!rt.on || !rt.res || !rt.start || rt.res.key !== routeKey()){ plMap.setRoute(null); return; }
@@ -8184,7 +8210,7 @@ function renderRoute(){
   const R = rt.results;
   const onRt = r=>rt.stops.find(x=>(r.placeId && x.placeId===r.placeId) || sameSpot(x, r));
   const resRow = (r, kind, i)=>{ const st = onRt(r);
-    return `<button type="button" data-add="${kind}:${i}" class="${st ? 'on' : ''}" aria-pressed="${!!st}"><span>${esc(r.emoji || '📍')}</span><span><b>${esc(r.name)}</b>${r.sub ? `<small>${esc(r.sub)}</small>` : ''}</span>${st ? `<span class="rt-added">✓ Stop ${stopNumber(st.k)}</span>` : '<span class="rt-addp">＋</span>'}</button>`; };
+    return `<button type="button" data-add="${kind}:${i}" class="${st ? 'on' : ''}" aria-pressed="${!!st}"><span>${esc(r.emoji || '📍')}</span><span><b>${esc(r.name)}</b>${r.sub ? `<small>${esc(r.sub)}</small>` : ''}</span>${st ? `<span class="rt-added">✓ ${stopNumber(st.k) ? `Stop ${stopNumber(st.k)}` : 'Added'}</span>` : '<span class="rt-addp">＋</span>'}</button>`; };
   box.innerHTML = `
     <div class="rt-head"><b>Plan a route</b><button type="button" class="rt-min" id="rtMin" aria-expanded="${rt.mini ? 'false' : 'true'}">${rt.mini ? 'Show ▴' : 'Smaller ▾'}</button></div>
     <div class="rt-modes" role="radiogroup" aria-label="How you travel">
@@ -8209,12 +8235,14 @@ function renderRoute(){
     ${rt.linkMsg ? `<div class="rt-empty" role="status">${rt.searching ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}${esc(rt.linkMsg)}</div>` : ''}
     ${R ? `<div class="rt-res">${R.mine.length ? `<div class="rt-sec">Your places</div>${R.mine.map((r, i)=>resRow(r, 'm', i)).join('')}` : ''}
       ${R.found ? (R.found.length ? `<div class="rt-sec">${rt.resFar ? 'Nothing near here · further away' : 'On the map'}${R.found.length > 1 ? ` · ${R.found.length}` : ''}</div>${R.found.slice(0, rt.resAll ? 60 : 8).map((r, i)=>resRow(r, 'f', i)).join('')}${R.found.length > 8 && !rt.resAll ? `<button type="button" class="rt-more" id="rtResAll">Show all ${R.found.length} · they’re also pins on the map</button>` : ''}${rt.searching ? '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Looking for more…</div>' : ''}` : (R.mine.length ? '' : '<div class="rt-empty">Nothing found. Try another name, or tap the place on the map.</div>')) : '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Searching…</div>'}</div>` : ''}
-    <div class="rt-hint">Or tap any of your pins, or any shop on the map, to add it. Tap a numbered pin to take it off.</div>
+    <div class="rt-hint">Or tap any of your pins, or any shop on the map, to add it. Tap one of your route’s green pins to take it off.</div>
     ${rt.stops.length ? `<ol class="rt-stops">${rt.start ? `<li class="rt-startrow"><span class="rt-n"><svg class="play-ic" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.4 L9 5 L3 8.6Z" fill="currentColor"/></svg></span>${rt.startSrc==='gps' ? '<span class="rt-ic" aria-hidden="true">📍</span>' : ''}<span class="rt-nm"><b>${rt.startSrc==='gps' ? 'Where you are now' : esc(rt.startName || 'The spot you chose on the map')}</b><small>Start</small></span></li>` : ''}${ordered.map((s, i)=>{ const leg = res && res.legs[i];
         const tr = leg && rt.mode==='transit' && leg.tr;
-        return `<li class="${tr ? 'has-tr' : ''}"><span class="rt-n">${i + 1}</span><span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? (res.busyFrom != null && i >= res.busyFrom ? '<small class="rt-upd"><span class="busy-spin" aria-hidden="true"></span>Updating times…</small>' : trLegHtml(tr, i===0, leg, res.order[i] != null ? i : i)) : `<small>${leg ? (roadMode() ? `${fmtDur(leg.dur)} ${rt.mode==='car' ? 'drive' : 'walk'} · ${fmtDist(leg.dist)}${leg.delay >= 60 ? ` · <span class="rt-late">+${Math.round(leg.delay / 60)} min traffic</span>` : ''}${res.est && !(res.traffic && !res.traffic.failed) ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
+        const num = res || s.fixed ? i + 1 : '';
+        return `<li class="${tr ? 'has-tr' : ''}${s.fixed ? ' fixed' : ''}"><span class="rt-n${num ? '' : ' none'}"${num ? '' : ' title="The order is worked out when you plan the route"'}>${num}</span><span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? (res.busyFrom != null && i >= res.busyFrom ? '<small class="rt-upd"><span class="busy-spin" aria-hidden="true"></span>Updating times…</small>' : trLegHtml(tr, i===0, leg, res.order[i] != null ? i : i)) : `<small>${leg ? (roadMode() ? `${fmtDur(leg.dur)} ${rt.mode==='car' ? 'drive' : 'walk'} · ${fmtDist(leg.dist)}${leg.delay >= 60 ? ` · <span class="rt-late">+${Math.round(leg.delay / 60)} min traffic</span>` : ''}${res.est && !(res.traffic && !res.traffic.failed) ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
           ${i===0 && res && rt.start ? `<button type="button" class="rt-done" data-done="${esc(s.k)}">✓ Done here</button>` : ''}</span>
           ${rt.start && res ? `<a class="rt-dir" href="${esc(gmDir(prevOf(i), s, rt.mode))}" target="_blank" rel="noopener noreferrer" title="${rt.mode==='walk' ? 'Walking' : rt.mode==='car' ? 'Driving' : 'Public transport'} directions in Google Maps" aria-label="Directions to ${esc(s.name)}">${GMAPS_SVG}${roadMode() ? '' : 'Go'}</a>` : ''}
+          ${rt.stops.length > 1 ? `<button type="button" class="rt-fix${s.fixed ? ' on' : ''}" data-fix="${esc(s.k)}" aria-pressed="${!!s.fixed}" title="${s.fixed ? `Pinned as stop ${i + 1}: click to let the planner choose its place` : 'Go here first (pin the stops you want first, in your order)'}" aria-label="${s.fixed ? 'Unpin' : 'Pin'} ${esc(s.name)}">📌</button>` : ''}
           <button type="button" class="rt-x" data-rm="${esc(s.k)}" aria-label="Take ${esc(s.name)} off the route" title="Take it off">×</button></li>`; }).join('')}</ol>`
       : '<div class="rt-empty">No stops yet. Add the shops you want to visit, and I’ll work out the quickest order.</div>'}
     ${res && rt.stops.length ? (roadMode()
@@ -8224,7 +8252,7 @@ function renderRoute(){
         : res.trOk ? `<div class="rt-sum">≈ <b>${fmtDur(Math.max(0, (res.arrive - (res.leave || Date.now())) / 1000))}</b> by public transport${rt.leaveAt ? `, leaving ${esc(fmtWhen(res.leave))}` : ''} · at your last stop around <b>${fmtClock(res.arrive)}</b>.<small>Times for later stops assume you leave as soon as you arrive. When you’re finished at a stop, tap <b>✓ Done here</b> for fresh times from where you are.${res.trOk < res.legs.length ? ' For steps without a connection, tap <b>Go</b> for Google Maps.' : ''}</small><small class="rt-credit">Connections: <a href="https://transitous.org" target="_blank" rel="noopener noreferrer">Transitous</a> · <a href="${TRANSITOUS_SOURCES}" target="_blank" rel="noopener noreferrer">timetable sources</a></small></div>`
         : `<div class="rt-sum">Stops in the shortest order (${fmtDist(res.total.dist)} in all).<small>${HOST ? 'Couldn’t get tram, metro and bus times right now.' : 'Tram, metro and bus times work in the app version (outside Claude).'} Tap <b>Go</b> at each stop for public transport directions in Google Maps.</small></div>`)
       : rt.busy ? '<div class="rt-sum"><span class="busy-spin" aria-hidden="true"></span>Working out the quickest order…</div>'
-      : rt.stops.length && !rt.asked && !rt.startPick ? `<div class="rt-go${rt.results ? ' static' : ''}"><button type="button" class="pc-btn pc-main" id="rtPlan"${rt.start ? '' : ' disabled'}>🧭 Plan my route${rt.stops.length > 1 ? ` · ${rt.stops.length} stops` : ''}</button><small>${rt.start ? 'Add all your stops first, then press this to get the quickest order.' : 'Set where you start (above) first.'}</small></div>`
+      : rt.stops.length && !rt.asked && !rt.startPick ? `<div class="rt-go${rt.results ? ' static' : ''}"><button type="button" class="pc-btn pc-main" id="rtPlan"${rt.start ? '' : ' disabled'}>🧭 Plan my route${rt.stops.length > 1 ? ` · ${rt.stops.length} stops` : ''}</button><small>${rt.start ? (rt.stops.length > 1 ? (rt.stops.some(x=>x.fixed) ? 'Pinned stops 📌 go first, in your order; I’ll put the rest in the quickest order after them.' : 'Add all your stops first, then press this to get the quickest order. Want some stops first, in your own order? Tap their 📌.') : 'Add all your stops first, then press this to get the quickest order.') : 'Set where you start (above) first.'}</small></div>`
       : rt.stops.length && !rt.start ? '<div class="rt-sum">Set where you start (above), and I’ll work out the order.</div>' : ''}
     ${rt.stops.length ? `<div class="rt-acts">${res && rt.start ? gmRouteButtons(rt.start, ordered, rt.mode) : ''}
       <button type="button" class="pc-btn" id="rtClear">Clear route</button></div>` : ''}`;
@@ -8257,6 +8285,7 @@ function renderRoute(){
   box.querySelectorAll('[data-add]').forEach(b=>b.onclick = ()=>{ const [kind, i] = b.dataset.add.split(':'); const r = (kind==='m' ? R.mine : R.found)[+i]; if(!r) return;
     const st = onRt(r); if(st) removeStop(st.k); else addStop(r); });              // tap again to take it off
   box.querySelectorAll('[data-rm]').forEach(b=>b.onclick = ()=>removeStop(b.dataset.rm));
+  box.querySelectorAll('[data-fix]').forEach(b=>b.onclick = ()=>toggleFixed(b.dataset.fix));
   box.querySelectorAll('[data-done]').forEach(b=>b.onclick = ()=>doneHere(b.dataset.done));
   box.querySelectorAll('[data-pick]').forEach(b=>b.onclick = e=>{ e.preventDefault(); const [i, d] = b.dataset.pick.split(':').map(Number); pickConnection(i, d); });
   box.querySelectorAll('.rt-stops > li.has-tr').forEach(li=>{
