@@ -1487,8 +1487,16 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pm-name{position:absolute;left:50%;top:2px;transform:translateX(-50%);white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;
     padding:1px 6px;border-radius:4px;background:rgba(255,255,255,.88);color:#222;font:600 11px/1.3 -apple-system,sans-serif;
     box-shadow:0 1px 3px rgba(0,0,0,.2);display:none;pointer-events:none;}
-  .pm-pin:hover .pm-name,.pm-pin.sel .pm-name{display:block;}
+  .pm-pin.sel .pm-name{display:block;}
+  .pm-tip{position:absolute;left:50%;bottom:48px;transform:translateX(-50%);display:none;width:max-content;max-width:240px;padding:6px 9px;border-radius:7px;
+    background:var(--card);color:var(--ink);border:1px solid var(--line);box-shadow:0 4px 14px rgba(0,0,0,.28);font:12px/1.35 -apple-system,sans-serif;pointer-events:none;text-align:left;white-space:normal;}
+  .pm-tip b{display:block;font-weight:700;font-size:12.5px;}
+  .pm-tip small{display:block;color:var(--muted);font-size:11px;margin-top:1px;}
+  .pm-tip em{display:block;font-style:normal;color:var(--accent);font-size:11px;font-weight:600;margin-top:3px;}
+  @media (hover:hover){ .pm-pin:hover .pm-tip{display:block;} .pm-pin:hover .pm-name{display:none;} }
+  @media (hover:none){ .pm-pin:hover .pm-name{display:block;} }
   .pm-pin:hover,.pm-pin.sel{z-index:3;}
+  .pm-pin:hover{z-index:5 !important;}
   .pm-pin.sel .pm-dot{transform:translateY(-5.3px) rotate(-45deg) scale(1.22);border-color:var(--ink);}   /* bigger, with its tip staying on the spot */
   .pm-pin.temp .pm-dot{border-style:dashed;animation:pmPulse 1.2s ease-in-out infinite;}
   .pm-pin.temp .pm-emo{color:#fff;font-weight:700;}
@@ -1768,7 +1776,8 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-go .pc-btn:disabled{opacity:.5;cursor:default;}
   .rt-go small{color:var(--muted);font-size:0.78rem;}
   .rt-empty{color:var(--muted);font-size:0.82rem;padding:6px 2px;}
-  .pm-pin.dim{opacity:.45;}
+  .pm-pin.dim .pm-dot{opacity:.45;}
+  .pm-pin.dim:hover .pm-dot{opacity:.85;}
   .pm-pin.stop .pm-dot{background:var(--accent);border-color:var(--paper);}
   .pm-pin.stop .pm-emo{color:var(--paper);font-weight:800;font-family:-apple-system,sans-serif;font-size:0.82rem;}
   .pm-pin.start .pm-emo{font-size:0.75rem;padding-left:2px;}
@@ -7060,7 +7069,7 @@ function renderPlaces(){
     id:p.id, lat:p.lat, lng:p.lng, label:p.name || 'Place',
     cls:(p.id===plSel ? 'sel' : '') + (stOf(p)==='been' ? ' been' : stOf(p)==='regular' ? ' regular' : '') + (closedNote(p) ? ' gone' : '') + (p.review ? ' review' : ''),
     pc:`var(--nc-${placeColor(p)})`,
-    html:`<span class="pm-dot"><span class="pm-emo">${esc(placeEmoji(p))}</span></span>${stOf(p)==='been' ? '<span class="pm-been" aria-hidden="true">✓</span>' : stOf(p)==='regular' ? '<span class="pm-been pm-reg" aria-hidden="true">★</span>' : ''}<span class="pm-name">${esc(p.name||'')}</span>`,
+    html:`<span class="pm-dot"><span class="pm-emo">${esc(placeEmoji(p))}</span></span>${stOf(p)==='been' ? '<span class="pm-been" aria-hidden="true">✓</span>' : stOf(p)==='regular' ? '<span class="pm-been pm-reg" aria-hidden="true">★</span>' : ''}<span class="pm-name">${esc(p.name||'')}</span>${pinTip(p.name, placeAddr(p), PLACE_STATUS[stOf(p)])}`,
   })).concat(plPoi && !plPick && !plSel ? [{id:'__poi', lat:plPoi.lat, lng:plPoi.lng, cls:'temp poi', pc:'var(--accent)', html:`<span class="pm-dot"><span class="pm-emo">${esc(plPoi.emoji)}</span></span>`, label:plPoi.name}] : [])
      .concat(plPick && plPick.temp ? [{id:'__temp', lat:plPick.temp[0], lng:plPick.temp[1], cls:'temp', pc:'var(--accent)', html:'<span class="pm-dot"><span class="pm-emo">＋</span></span>', label:'New place'}] : []));
   if(!plFitted && placesLoaded && plMap.el.clientWidth){           // the first time: show all your places
@@ -7562,6 +7571,10 @@ function stopNumber(k){
   if(rt.res && rt.res.key===routeKey()){ const i = rt.res.order.findIndex(j=>rt.stops[j - 1] && rt.stops[j - 1].k===k); if(i >= 0) return i + 1; }
   return rt.stops.findIndex(x=>x.k===k) + 1;
 }
+// the little card above a pin when you point at it (computer): name, address, and what a click does
+function pinTip(name, addr, what){
+  return `<span class="pm-tip"><b>${esc(name || 'Place')}</b>${addr ? `<small>${esc(addr)}</small>` : ''}${what ? `<em>${esc(what)}</em>` : ''}</span>`;
+}
 function routeMarkers(){
   const out = [];
   const pinStart = rt.start && rt.startSrc!=='gps';           // a place or spot you chose: a green "start" pin like the stops
@@ -7569,12 +7582,12 @@ function routeMarkers(){
     if(pinStart && sameSpot(p, rt.start)) return;            // your place is the start: the start pin stands in for it
     const st = rt.stops.find(x=>x.placeId===p.id);
     out.push(st ? {id: p.id, lat: p.lat, lng: p.lng, label: `Stop ${stopNumber(st.k)}: ${p.name || ''}`, cls: 'stop', pc: 'var(--accent)',
-                   html: `<span class="pm-dot"><span class="pm-emo">${stopNumber(st.k)}</span></span><span class="pm-name">${esc(p.name || '')}</span>`}
+                   html: `<span class="pm-dot"><span class="pm-emo">${stopNumber(st.k)}</span></span><span class="pm-name">${esc(p.name || '')}</span>${pinTip(p.name, placeAddr(p), rt.setStart ? 'Click to start here' : `Stop ${stopNumber(st.k)} · click to take it off`)}`}
               : {id: p.id, lat: p.lat, lng: p.lng, label: `${p.name || 'Place'} (tap to add to your route)`, cls: 'dim', pc: `var(--nc-${placeColor(p)})`,
-                 html: `<span class="pm-dot"><span class="pm-emo">${esc(placeEmoji(p))}</span></span>`});
+                 html: `<span class="pm-dot"><span class="pm-emo">${esc(placeEmoji(p))}</span></span>${pinTip(p.name, placeAddr(p), rt.setStart ? 'Click to start here' : 'Click to add to your route')}`});
   });
   rt.stops.filter(s=>!s.placeId || !places.some(p=>p.id===s.placeId)).forEach(s=>out.push({id: '__stop_' + s.k, lat: s.lat, lng: s.lng, label: `Stop ${stopNumber(s.k)}: ${s.name}`, cls: 'stop', pc: 'var(--accent)',
-    html: `<span class="pm-dot"><span class="pm-emo">${stopNumber(s.k)}</span></span><span class="pm-name">${esc(s.name)}</span>`}));
+    html: `<span class="pm-dot"><span class="pm-emo">${stopNumber(s.k)}</span></span><span class="pm-name">${esc(s.name)}</span>${pinTip(s.name, '', `Stop ${stopNumber(s.k)} · click to take it off`)}`}));
   if(pinStart) out.push({id: '__start', lat: rt.start.lat, lng: rt.start.lng, label: `Start: ${rt.startName || 'the spot you chose'}`, cls: 'stop start', pc: 'var(--accent)',
     html: `<span class="pm-dot"><span class="pm-emo">▶</span></span><span class="pm-name">${esc(rt.startName || 'Start')}</span>`});
   else if(rt.start) out.push({id: '__start', lat: rt.start.lat, lng: rt.start.lng, label: 'Start: where you are', cls: 'me', pc: '#2f6fdb', html: '<span class="pm-dot"><span class="pm-emo"></span></span>'});
