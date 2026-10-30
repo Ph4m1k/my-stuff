@@ -1728,7 +1728,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-mini-btn{border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:4px;padding:4px 9px;font-size:0.76rem;cursor:pointer;}
   .rt-mini-btn.on{border-color:var(--accent);color:var(--accent);font-weight:600;}
   .rt-srcs{flex-basis:100%;display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:5px;}
-  .rt-srcs .rt-mini-btn{padding:6px 4px;text-align:center;line-height:1.25;overflow-wrap:anywhere;}
+  .rt-srcs .rt-mini-btn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:6px 4px;text-align:center;line-height:1.25;overflow-wrap:anywhere;}   /* icon on top, word under it */
   .rt-shint{flex-basis:100%;color:var(--accent);font-size:0.76rem;font-weight:600;}
   .rt-spick{flex-basis:100%;display:flex;flex-direction:column;gap:4px;margin-top:4px;}
   .rt-spick .rt-sec{margin-top:6px;font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);}
@@ -1806,6 +1806,10 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-go small{color:var(--muted);font-size:0.78rem;}
   .rt-empty{color:var(--muted);font-size:0.82rem;padding:6px 2px;}
   .pm-pin.dim .pm-dot{opacity:.45;}
+  .pm-pin.dim.faint .pm-dot{opacity:.18;}
+  .pm-pin.hit{z-index:4;}
+  .pm-pin.hit .pm-dot{box-shadow:0 0 0 3px var(--card),0 0 0 6px var(--accent),0 2px 8px rgba(0,0,0,.4);}
+  .pm-pin.hit .pm-name{display:block;}
   .pm-pin.res .pm-dot{background:var(--card);border:2px solid var(--accent);transform:translateY(4.3px) rotate(-45deg) scale(.82);}   /* smaller, tip still on the spot */
   .pm-pin.res:hover .pm-dot{transform:translateY(1.2px) rotate(-45deg) scale(.95);}
   .rt-more{margin:4px 6px 6px;padding:6px 10px;border:1px dashed var(--line);border-radius:6px;background:none;color:var(--accent);font:inherit;font-size:0.78rem;cursor:pointer;text-align:left;}
@@ -7623,13 +7627,15 @@ function pinTip(name, addr, what){
 function routeMarkers(){
   const out = [];
   const pinStart = rt.start && rt.startSrc!=='gps';           // a place or spot you chose: a green "start" pin like the stops
+  // while you search: your own places that match stand out (with their names), the rest fade further
+  const hits = routeHits(), searching = !!(rt.q && rt.results);
   places.filter(p=>validLatLng(p.lat, p.lng)).forEach(p=>{
     if(pinStart && sameSpot(p, rt.start)) return;            // your place is the start: the start pin stands in for it
     const st = rt.stops.find(x=>x.placeId===p.id);
     out.push(st ? {id: p.id, lat: p.lat, lng: p.lng, label: `Stop ${stopNumber(st.k)}: ${p.name || ''}`, cls: 'stop', pc: 'var(--accent)',
                    html: `<span class="pm-dot"><span class="pm-emo">${stopNumber(st.k)}</span></span><span class="pm-name">${esc(p.name || '')}</span>${pinTip(p.name, placeAddr(p), rt.setStart ? 'Click to start here' : `Stop ${stopNumber(st.k)} · click to take it off`)}`}
-              : {id: p.id, lat: p.lat, lng: p.lng, label: `${p.name || 'Place'} (tap to add to your route)`, cls: 'dim', pc: `var(--nc-${placeColor(p)})`,
-                 html: `<span class="pm-dot"><span class="pm-emo">${esc(placeEmoji(p))}</span></span>${pinTip(p.name, placeAddr(p), rt.setStart ? 'Click to start here' : 'Click to add to your route')}`});
+              : {id: p.id, lat: p.lat, lng: p.lng, label: `${p.name || 'Place'} (tap to add to your route)`, cls: hits.has(p.id) ? 'hit' : searching ? 'dim faint' : 'dim', pc: `var(--nc-${placeColor(p)})`,
+                 html: `<span class="pm-dot"><span class="pm-emo">${esc(placeEmoji(p))}</span></span>${hits.has(p.id) ? `<span class="pm-name">${esc(p.name || '')}</span>` : ''}${pinTip(p.name, placeAddr(p), rt.setStart ? 'Click to start here' : 'Click to add to your route')}`});
   });
   rt.stops.filter(s=>!s.placeId || !places.some(p=>p.id===s.placeId)).forEach(s=>out.push({id: '__stop_' + s.k, lat: s.lat, lng: s.lng, label: `Stop ${stopNumber(s.k)}: ${s.name}`, cls: 'stop', pc: 'var(--accent)',
     html: `<span class="pm-dot"><span class="pm-emo">${stopNumber(s.k)}</span></span><span class="pm-name">${esc(s.name)}</span>${pinTip(s.name, '', `Stop ${stopNumber(s.k)} · click to take it off`)}`}));
@@ -8053,7 +8059,26 @@ async function routeSearch(text){
   const all = [];
   for(const x of [...(found || []), ...(area || [])]) if(x && validLatLng(x.lat, x.lng) && !all.some(o=>Math.abs(o.lat - x.lat) < 0.0008 && Math.abs(o.lng - x.lng) < 0.0008)) all.push(x);
   rt.results = {mine, found: all.length || !(rt.results && rt.results.found && rt.results.found.length) ? shape(all) : rt.results.found};
-  renderRoute(); refreshRoutePins();
+  renderRoute(); refreshRoutePins(); fitRouteHits();
+}
+// your places that match what you typed in the route box (all of them, not only the few listed), and saved places the area search found
+function routeHits(){
+  const out = new Set(); if(!rt.q || !rt.results) return out;
+  const q = norm(rt.q);
+  places.forEach(p=>{ if(validLatLng(p.lat, p.lng) && norm([p.name, p.address].join(' ')).includes(q)) out.add(p.id); });
+  (rt.results.found || []).forEach(r=>{ const p = places.find(x=>validLatLng(x.lat, x.lng) && sameSpot(x, r)); if(p) out.add(p.id); });
+  return out;
+}
+// after a search: if some of what was found is off screen, zoom out to show all of it (nearby ones only)
+function fitRouteHits(){
+  if(!plMap || !plMap.bounds) return;
+  const hit = routeHits(), c = plMap.center();
+  const pts = [...places.filter(p=>hit.has(p.id)), ...((rt.results && rt.results.found) || [])].filter(p=>validLatLng(p.lat, p.lng) && distKm(c[0], c[1], p.lat, p.lng) < 40);
+  if(pts.length < 2) return;
+  const b = plMap.bounds();
+  if(pts.every(p=>p.lng >= b.w && p.lng <= b.e && p.lat >= b.s && p.lat <= b.n)) return;
+  const sheet = !isWide() && document.querySelector('.places.route .pl-side');
+  plMap.fit(pts.map(p=>[p.lat, p.lng]), plMap.gl ? {top: 60, bottom: Math.max(40, (sheet ? sheet.getBoundingClientRect().height : 0) + 30), left: 40, right: 60} : 60);
 }
 // search results as pins on the map while planning: tap one to add it as a stop
 function refreshRoutePins(){ if(rt.on && plMap) plMap.setMarkers(routeMarkers()); }
@@ -8153,9 +8178,9 @@ function renderRoute(){
     </div>
     <div class="rt-start"><span class="rt-s">${startLine}</span>
       <div class="rt-srcs" role="group" aria-label="Where the route starts">
-        <button type="button" class="rt-mini-btn${srcOn==='gps' ? ' on' : ''}" aria-pressed="${srcOn==='gps'}" id="rtLocate">📍 Where&nbsp;I&nbsp;am</button>
-        <button type="button" class="rt-mini-btn${srcOn==='find' ? ' on' : ''}" aria-pressed="${srcOn==='find'}" id="rtPickPlace">🔎 Find</button>
-        <button type="button" class="rt-mini-btn${srcOn==='map' ? ' on' : ''}" aria-pressed="${srcOn==='map'}" id="rtPickStart">🗺️ On&nbsp;the&nbsp;map</button>
+        <button type="button" class="rt-mini-btn${srcOn==='gps' ? ' on' : ''}" aria-pressed="${srcOn==='gps'}" id="rtLocate"><span aria-hidden="true">📍</span><span>Where&nbsp;I&nbsp;am</span></button>
+        <button type="button" class="rt-mini-btn${srcOn==='find' ? ' on' : ''}" aria-pressed="${srcOn==='find'}" id="rtPickPlace"><span aria-hidden="true">🔎</span><span>Find</span></button>
+        <button type="button" class="rt-mini-btn${srcOn==='map' ? ' on' : ''}" aria-pressed="${srcOn==='map'}" id="rtPickStart"><span aria-hidden="true">🗺️</span><span>On&nbsp;the&nbsp;map</span></button>
       </div>
       ${rt.setStart ? '<small class="rt-shint">Now tap the map, or one of your pins, where you start.</small>' : ''}
       ${rt.locErr ? `<small class="err">${esc(rt.locErr)}</small>` : ''}
