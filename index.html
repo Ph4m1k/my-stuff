@@ -8060,8 +8060,13 @@ async function routeSearch(text){
   let area = []; try{ area = await areaP; }catch(e){}
   if(ctl !== rtSearchCtl) return;
   rt.searching = false;
-  const all = [];
+  let all = [];
   for(const x of [...(found || []), ...(area || [])]) if(x && validLatLng(x.lat, x.lng) && !all.some(o=>Math.abs(o.lat - x.lat) < 0.0008 && Math.abs(o.lng - x.lng) < 0.0008)) all.push(x);
+  // shops of that name in other towns (Trutnov, Bratislava…) only clutter the list: keep the ones near you, unless there are none
+  const [cl, cg] = rt.start ? [rt.start.lat, rt.start.lng] : plMap.center();
+  const near = all.filter(x=>distKm(cl, cg, x.lat, x.lng) <= 40);
+  rt.resFar = !near.length && all.length > 0;
+  if(near.length) all = near;
   rt.results = {mine, found: all.length || !(rt.results && rt.results.found && rt.results.found.length) ? shape(all) : rt.results.found};
   renderRoute(); refreshRoutePins(); fitRouteHits();
 }
@@ -8198,7 +8203,7 @@ function renderRoute(){
     <form class="rt-add" id="rtAdd"><input id="rtQ" type="search" enterkeyhint="search" autocomplete="off" placeholder="Shop name or Google Maps link…" aria-label="Add a shop or place, or paste a Google Maps link" value="${esc(rt.q)}"><button type="submit" class="pc-btn"${rt.searching ? ' aria-busy="true"' : ''}>${rt.searching ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}Find</button></form>
     ${rt.linkMsg ? `<div class="rt-empty" role="status">${rt.searching ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}${esc(rt.linkMsg)}</div>` : ''}
     ${R ? `<div class="rt-res">${R.mine.length ? `<div class="rt-sec">Your places</div>${R.mine.map((r, i)=>resRow(r, 'm', i)).join('')}` : ''}
-      ${R.found ? (R.found.length ? `<div class="rt-sec">On the map${R.found.length > 1 ? ` · ${R.found.length}` : ''}</div>${R.found.slice(0, rt.resAll ? 60 : 8).map((r, i)=>resRow(r, 'f', i)).join('')}${R.found.length > 8 && !rt.resAll ? `<button type="button" class="rt-more" id="rtResAll">Show all ${R.found.length} · they’re also pins on the map</button>` : ''}${rt.searching ? '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Looking for more…</div>' : ''}` : (R.mine.length ? '' : '<div class="rt-empty">Nothing found. Try another name, or tap the place on the map.</div>')) : '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Searching…</div>'}</div>` : ''}
+      ${R.found ? (R.found.length ? `<div class="rt-sec">${rt.resFar ? 'Nothing near here · further away' : 'On the map'}${R.found.length > 1 ? ` · ${R.found.length}` : ''}</div>${R.found.slice(0, rt.resAll ? 60 : 8).map((r, i)=>resRow(r, 'f', i)).join('')}${R.found.length > 8 && !rt.resAll ? `<button type="button" class="rt-more" id="rtResAll">Show all ${R.found.length} · they’re also pins on the map</button>` : ''}${rt.searching ? '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Looking for more…</div>' : ''}` : (R.mine.length ? '' : '<div class="rt-empty">Nothing found. Try another name, or tap the place on the map.</div>')) : '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Searching…</div>'}</div>` : ''}
     <div class="rt-hint">Or tap any of your pins, or any shop on the map, to add it. Tap a numbered pin to take it off.</div>
     ${rt.stops.length ? `<ol class="rt-stops">${rt.start ? `<li class="rt-startrow"><span class="rt-n">▶</span><span class="rt-nm"><b>${rt.startSrc==='gps' ? '📍 Where you are now' : esc(rt.startName || 'The spot you chose on the map')}</b><small>Start</small></span></li>` : ''}${ordered.map((s, i)=>{ const leg = res && res.legs[i];
         const tr = leg && rt.mode==='transit' && leg.tr;
