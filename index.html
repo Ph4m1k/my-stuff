@@ -8193,7 +8193,7 @@ function renderRoute(){
       ${rt.startPick ? startPickHTML() : ''}</div>
     ${rt.mode==='transit' ? `<div class="rt-leave"><span>🕘 Leave</span>
       <button type="button" class="rt-mini-btn${rt.leaveAt ? '' : ' on'}" id="rtNow">Now</button>
-      <input type="datetime-local" id="rtWhen" aria-label="Leave at" value="${rt.leaveAt ? localInputValue(rt.leaveAt) : ''}" min="${localInputValue(Date.now())}">
+      <input type="datetime-local" id="rtWhen" aria-label="Leave at" value="${localInputValue(rt.leaveAt || Date.now())}" min="${localInputValue(Date.now())}">
       ${rt.leaveAt ? `<small>${esc(fmtWhen(rt.leaveAt))}</small>` : ''}</div>` : ''}
     <form class="rt-add" id="rtAdd"><input id="rtQ" type="search" enterkeyhint="search" autocomplete="off" placeholder="Shop name or Google Maps link…" aria-label="Add a shop or place, or paste a Google Maps link" value="${esc(rt.q)}"><button type="submit" class="pc-btn"${rt.searching ? ' aria-busy="true"' : ''}>${rt.searching ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}Find</button></form>
     ${rt.linkMsg ? `<div class="rt-empty" role="status">${rt.searching ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}${esc(rt.linkMsg)}</div>` : ''}
@@ -8234,7 +8234,7 @@ function renderRoute(){
     sq.addEventListener('paste', e=>{ const t = ((e.clipboardData && e.clipboardData.getData('text')) || '').trim(); if(/^https?:\/\//i.test(t)) setTimeout(()=>startSearch(t, true), 0); });
     box.querySelector('#rtStartF').onsubmit = e=>{ e.preventDefault(); keep(()=>startSearch(sq.value, true)); };
   }
-  const nowB = box.querySelector('#rtNow'); if(nowB) nowB.onclick = ()=>{ if(!rt.leaveAt) return; rt.leaveAt = null; rt.res = null; replanIfAsked(); };
+  const nowB = box.querySelector('#rtNow'); if(nowB) nowB.onclick = ()=>{ if(!rt.leaveAt){ renderRoute(); return; } rt.leaveAt = null; rt.res = null; replanIfAsked(); };   // the box shows today, right now
   const wh = box.querySelector('#rtWhen');
   if(wh) wh.onchange = ()=>{ const t = wh.value ? new Date(wh.value).getTime() : NaN; rt.leaveAt = isFinite(t) && t > Date.now() + 60e3 ? t : null; rt.res = null; replanIfAsked(); };
   const q = box.querySelector('#rtQ');
