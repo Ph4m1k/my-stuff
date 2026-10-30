@@ -904,7 +904,8 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
     padding-top:env(safe-area-inset-top,0px);
     padding-bottom:env(safe-area-inset-bottom,0px);
   }
-  .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 80px;}
+  .wrap{max-width:1640px;margin:0 auto;padding:28px 28px 80px;}
+  .wrap:has(> #placesView:not([hidden])){max-width:none;padding-left:32px;padding-right:32px;}   /* the map uses the whole screen */
   header{display:flex;justify-content:space-between;align-items:baseline;
     border-bottom:2px solid var(--ink);padding-bottom:14px;margin-bottom:28px;flex-wrap:wrap;gap:10px;}
   h1{font-size:1.6rem;margin:0;letter-spacing:0.3px;}
@@ -1378,7 +1379,8 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
 
   /* ---------- Places: map ---------- */
   .places[hidden]{display:none !important;}
-  .places{display:grid;grid-template-columns:300px 1fr;gap:20px;height:calc(100vh - 150px);min-height:440px;}
+  .places{display:grid;grid-template-columns:clamp(320px, 27vw, 460px) 1fr;gap:22px;height:calc(100vh - 150px);min-height:440px;}
+  @media (min-width:1300px){ .rt-panel{font-size:0.93rem;} .pl-row{padding:12px 14px;} .pl-txt b{font-size:1.02rem;} .pl-txt small{font-size:0.8rem;} .rt-nm b{font-size:0.98rem;} .rt-tr{font-size:0.82rem;} }
   .pl-side{display:flex;flex-direction:column;min-height:0;min-width:0;}
   #plq{flex:1;min-width:0;padding:9px 12px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--ink);font-family:-apple-system,sans-serif;font-size:0.9rem;}
   .pl-top{display:flex;gap:6px;margin-bottom:8px;}
