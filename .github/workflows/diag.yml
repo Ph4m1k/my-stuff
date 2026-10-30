@@ -1,0 +1,16 @@
+name: diag
+on: { push: { branches: [diag] } }
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - name: smarty in osm
+        run: |
+          r=$(curl -s -G "https://photon.komoot.io/api/" --data-urlencode "q=Smarty" --data-urlencode "bbox=14.30,50.00,14.60,50.15" --data-urlencode "limit=50" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d['features']), [(f['properties'].get('name'), f['properties'].get('street'), f['geometry']['coordinates']) for f in d['features']])")
+          echo "::notice title=photon smarty prague::$r"
+          q='[out:json][timeout:25];(nwr["name"~"smarty",i](50.00,14.30,50.15,14.60);nwr["brand"~"smarty",i](50.00,14.30,50.15,14.60););out center tags;'
+          r=$(curl -s --data-urlencode "data=$q" https://overpass-api.de/api/interpreter | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d['elements']), [(e['tags'].get('name'), e['tags'].get('addr:street'), e['tags'].get('shop'), (e.get('lat') or e.get('center',{}).get('lat'))) for e in d['elements']])")
+          echo "::notice title=overpass smarty prague::$r"
+          q2='[out:json][timeout:25];nwr(around:120,50.0779,14.4623)["shop"];out center tags;'
+          r=$(curl -s --data-urlencode "data=$q2" https://overpass-api.de/api/interpreter | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d['elements']), sorted(set(e['tags'].get('name','?') for e in d['elements']))[:80])")
+          echo "::notice title=shops at Flora::$r"
