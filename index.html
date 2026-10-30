@@ -580,6 +580,7 @@ HOST.createMap = el=>{
     zoomBy(d){ map.easeTo({ zoom: Math.round(map.getZoom()) + d, duration: reduced() ? 0 : 220 }); },
     latLngAt(sx, sy){ const p = map.unproject([sx, sy]); return [p.lat, p.lng]; },
     center(){ const c = map.getCenter(); return [c.lat, c.lng]; },
+    bounds(){ const b = map.getBounds(); return { w: b.getWest(), s: b.getSouth(), e: b.getEast(), n: b.getNorth() }; },
     setStyle(key, dark){
       dark = !!dark;
       if(dark === m.dark && m.styled) return;
@@ -798,6 +799,34 @@ async function searchPhoton(text, lat, lng, signal){
     };
   }).filter(Boolean);
 }
+// every shop/place with this name inside the part of the map you're looking at (e.g. all the Lidls in town), from OpenStreetMap
+HOST.searchArea = async (text, b, signal)=>{
+  if(!b || !text) return [];
+  const pad = 0.02, w = Math.max(-180, b.w - pad), s = Math.max(-85, b.s - pad), e = Math.min(180, b.e + pad), n = Math.min(85, b.n + pad);
+  const c = new AbortController(), t = setTimeout(()=>c.abort(), 9000);
+  const stop = ()=>c.abort(); if(signal) signal.addEventListener('abort', stop, { once: true });
+  try{
+    const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(text)}&bbox=${w.toFixed(4)},${s.toFixed(4)},${e.toFixed(4)},${n.toFixed(4)}&limit=50`, { signal: c.signal });
+    if(!r.ok) return [];
+    const j = await r.json();
+    const words = String(text).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\s+/).filter(x=>x.length > 1);
+    const out = [];
+    for(const f of j.features || []){
+      const p = f.properties || {}, g = (f.geometry && f.geometry.coordinates) || [];
+      if(PH_SKIP.has(p.osm_key) || !p.name || ['place', 'landuse', 'boundary'].includes(p.osm_key)) continue;
+      if(['parking', 'parking_entrance', 'parking_space', 'atm', 'vending_machine', 'post_box', 'bicycle_parking', 'charging_station', 'recycling'].includes(p.osm_value)) continue;   // the shop's car park, cash machine…
+      const hay = [p.name, p.brand].filter(Boolean).join(' ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if(words.length && !words.every(x=>hay.includes(x))) continue;       // only places that really carry the name
+      const lat = +g[1], lng = +g[0];
+      if(!isFinite(lat) || !isFinite(lng) || out.some(o=>Math.abs(o.lat - lat) < 0.0005 && Math.abs(o.lng - lng) < 0.0005)) continue;
+      const val = String(p.osm_value || '').replace(/_/g, ' ');
+      out.push({ name: p.name, lat, lng, poi: true, categories: [p.osm_value, p.osm_key].filter(Boolean).map(String), emoji: '', kind: val !== 'yes' ? val : '',
+                 address: [[p.street, p.housenumber].filter(Boolean).join(' '), p.district || p.locality, p.city].filter(Boolean).join(', ') });
+    }
+    return out;
+  }catch(e){ if(signal && signal.aborted) throw e; return []; }
+  finally{ clearTimeout(t); if(signal) signal.removeEventListener('abort', stop); }
+};
 // the street address of a spot on the map (for places saved without one): Photon, from OpenStreetMap
 HOST.reverseAddress = async (lat, lng)=>{
   const c = new AbortController(), t = setTimeout(()=>c.abort(), 8000);
@@ -1777,6 +1806,9 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-go small{color:var(--muted);font-size:0.78rem;}
   .rt-empty{color:var(--muted);font-size:0.82rem;padding:6px 2px;}
   .pm-pin.dim .pm-dot{opacity:.45;}
+  .pm-pin.res .pm-dot{background:var(--card);border:2px solid var(--accent);transform:translateY(4.3px) rotate(-45deg) scale(.82);}   /* smaller, tip still on the spot */
+  .pm-pin.res:hover .pm-dot{transform:translateY(1.2px) rotate(-45deg) scale(.95);}
+  .rt-more{margin:4px 6px 6px;padding:6px 10px;border:1px dashed var(--line);border-radius:6px;background:none;color:var(--accent);font:inherit;font-size:0.78rem;cursor:pointer;text-align:left;}
   .pm-pin.dim:hover .pm-dot{opacity:.85;}
   .pm-pin.stop .pm-dot{background:var(--accent);border-color:var(--paper);}
   .pm-pin.stop .pm-emo{color:var(--paper);font-weight:800;font-family:-apple-system,sans-serif;font-size:0.82rem;}
@@ -6861,6 +6893,7 @@ function ensurePlacesMap(){
     if(id==='__poi') return;
     if(plPick && plPick.mode==='move') return;
     if(plPick && id==='__temp'){ if(plPick.results && plPick.previewI != null) pickSearchResult(plPick.previewI); return; }   // tap the shown match to save it
+    if(plPick && id.startsWith('__res_')){ previewResult(+id.slice(6)); return; }                                          // another match from the search: show that one
     if(plPick){ if(id.startsWith('__')) return; plPick = null; }   // adding a place, but you tapped one of yours: show that one
     selectPlace(id, {pan:false});
   };
@@ -6930,6 +6963,7 @@ async function searchPlacesByName(text, alsoAsk, near){
   plPick.queries = [text, ...(alsoAsk || [])].filter((q, i, a)=>q && a.indexOf(q)===i);
   // where to look: the place's city when we know it (the map doesn't move until something is found), else where the map is
   plPick.searchAt = near ? [near.lat, near.lng] : plMap.center(); plPick.searchZ = near ? 13 : plMap.z; renderPickBar();
+  plPick.inView = !near && !!(HOST && HOST.searchArea && plMap.bounds); plPick.manyInView = 0;       // searching where you're looking: wait and show every match in view
   if(HOST && HOST.searchPlaces){
     const [clat, clng] = plPick.searchAt;
     if(placeSearchCtl) placeSearchCtl.abort();
@@ -6940,14 +6974,17 @@ async function searchPlacesByName(text, alsoAsk, near){
       const add = list=>{ for(const r of list || []) if(r && validLatLng(r.lat, r.lng) && !found.some(o=>Math.abs(o.lat - r.lat) < 0.0008 && Math.abs(o.lng - r.lng) < 0.0008)) found.push(withEmoji(r)); };   // the same spot found twice
       // as soon as one search brings a good match near the place, the map goes there (no waiting for the slower ones)
       const onPart = list=>{ if(!plPick || mine.signal.aborted) return; add(list); partialResults(found); };
+      // and, when searching where the map is, every place with that name in view (all the Lidls in town)
+      const areaP = !near && HOST.searchArea && plMap.bounds ? HOST.searchArea(text, plMap.bounds(), mine.signal).catch(()=>[]) : Promise.resolve([]);
       const lists = await Promise.all(plPick.queries.map(q=>HOST.searchPlaces(q, clat, clng, mine.signal, onPart).catch(e=>{ if(mine.signal.aborted) throw e; return null; })));
+      lists.push(await areaP);
       if(!plPick || mine.signal.aborted) return;
       if(lists.every(l=>l===null)) throw new Error('search failed');
       lists.forEach(add);
       if(plPick.previewI != null){                        // already on the map: just add the rest to "Other results"
         const cur = plPick.results[plPick.previewI];
         plPick.results = [cur, ...rankResults(found).filter(r=>r !== cur && !(Math.abs(r.lat - cur.lat) < 0.0008 && Math.abs(r.lng - cur.lng) < 0.0008))]; plPick.previewI = 0;
-        plPick.searching = false; renderPickBar(); return;
+        plPick.searching = false; renderPlaces(); renderPickBar(); return;
       }
       plPick.results = found.filter(r=>validLatLng(r.lat, r.lng)).map(r=>({...r, emoji: r.emoji || (r.categories && r.categories.length ? emojiForCategories(r.categories) : '📍')}));
     }catch(e){
@@ -6991,7 +7028,7 @@ function fitsSearch(r){ const qs = (plPick && plPick.queries) || [plPick && plPi
 function rankResults(res){ return [...res.filter(r=>!farFromSearch(r)), ...res.filter(r=>farFromSearch(r) && fitsSearch(r) >= 0.5)]; }
 // while the searches are still coming in: go to a match as soon as there's a convincing one near the place
 function partialResults(found){
-  if(!plPick || plPick.previewI != null) return;
+  if(!plPick || plPick.previewI != null || plPick.inView) return;
   const good = found.find(r=>!farFromSearch(r) && fitsSearch(r) >= 0.5);
   if(!good) return;
   plPick.results = [good, ...rankResults(found).filter(r=>r !== good)];
@@ -7000,6 +7037,11 @@ function partialResults(found){
 function showResults(){
   const res = plPick && plPick.results; if(!res){ renderPickBar(); return; }
   plPick.results = rankResults(res);
+  // several matches in the part of the map you're looking at (all the Lidls in town): keep the view, show them all as pins + the list
+  if(plPick.inView && plMap.bounds){
+    const b = plMap.bounds(), inside = plPick.results.filter(r=>r.lng >= b.w && r.lng <= b.e && r.lat >= b.s && r.lat <= b.n);
+    if(inside.length >= 2){ plPick.listOpen = false; plPick.manyInView = inside.length; renderPlaces(); renderPickBar(); return; }
+  }
   const far = farFromSearch, best = plPick.results[0];
   if(best && (!far(best) || plPick.searchZ <= 8)) previewResult(0);
   else { plPick.nothingNear = true; plPick.listOpen = false; renderPickBar(); }
@@ -7071,6 +7113,8 @@ function renderPlaces(){
     pc:`var(--nc-${placeColor(p)})`,
     html:`<span class="pm-dot"><span class="pm-emo">${esc(placeEmoji(p))}</span></span>${stOf(p)==='been' ? '<span class="pm-been" aria-hidden="true">✓</span>' : stOf(p)==='regular' ? '<span class="pm-been pm-reg" aria-hidden="true">★</span>' : ''}<span class="pm-name">${esc(p.name||'')}</span>${pinTip(p.name, placeAddr(p), PLACE_STATUS[stOf(p)])}`,
   })).concat(plPoi && !plPick && !plSel ? [{id:'__poi', lat:plPoi.lat, lng:plPoi.lng, cls:'temp poi', pc:'var(--accent)', html:`<span class="pm-dot"><span class="pm-emo">${esc(plPoi.emoji)}</span></span>`, label:plPoi.name}] : [])
+     .concat(plPick && plPick.mode==='add' && plPick.results ? plPick.results.map((r, i)=>i===plPick.previewI || !validLatLng(r.lat, r.lng) || savedNear(r, r.name) ? null
+        : {id:'__res_' + i, lat:r.lat, lng:r.lng, cls:'res', pc:'var(--accent)', label:r.name, html:`<span class="pm-dot"><span class="pm-emo">${esc(r.emoji || '📍')}</span></span>${pinTip(r.name, r.address, 'Click to pick this one')}`}).filter(Boolean) : [])
      .concat(plPick && plPick.temp ? [{id:'__temp', lat:plPick.temp[0], lng:plPick.temp[1], cls:'temp', pc:'var(--accent)', html:'<span class="pm-dot"><span class="pm-emo">＋</span></span>', label:'New place'}] : []));
   if(!plFitted && placesLoaded && plMap.el.clientWidth){           // the first time: show all your places
     const pts = places.filter(p=>validLatLng(p.lat, p.lng)).map(p=>[p.lat, p.lng]);
@@ -7561,6 +7605,7 @@ function startAtPlace(p, via){
 }
 function routePinTapped(id){
   if(id==='__start' || id==='__poi' || id==='__temp') return;
+  if(id.startsWith('__rf_')){ const r = rt.results && rt.results.found && rt.results.found[+id.slice(5)]; if(r) addStop(r); return; }
   if(rt.setStart && !id.startsWith('__')){ startAtPlace(places.find(x=>x.id===id), 'map'); return; }   // choosing the start: a pin counts too
   if(id.startsWith('__stop_')){ removeStop(id.slice(7)); return; }
   const p = places.find(x=>x.id===id); if(!p) return;
@@ -7588,6 +7633,11 @@ function routeMarkers(){
   });
   rt.stops.filter(s=>!s.placeId || !places.some(p=>p.id===s.placeId)).forEach(s=>out.push({id: '__stop_' + s.k, lat: s.lat, lng: s.lng, label: `Stop ${stopNumber(s.k)}: ${s.name}`, cls: 'stop', pc: 'var(--accent)',
     html: `<span class="pm-dot"><span class="pm-emo">${stopNumber(s.k)}</span></span><span class="pm-name">${esc(s.name)}</span>${pinTip(s.name, '', `Stop ${stopNumber(s.k)} · click to take it off`)}`}));
+  // what you searched for, as pins (all the Lidls in view…): tap to add
+  const R = rt.results && rt.results.found;
+  if(R) R.forEach((r, i)=>{ if(!validLatLng(r.lat, r.lng) || rt.stops.some(x=>sameSpot(x, r)) || places.some(p=>validLatLng(p.lat, p.lng) && sameSpot(p, r))) return;
+    out.push({id: '__rf_' + i, lat: r.lat, lng: r.lng, label: `${r.name} (tap to add to your route)`, cls: 'res', pc: 'var(--accent)',
+              html: `<span class="pm-dot"><span class="pm-emo">${esc(r.emoji || '📍')}</span></span>${pinTip(r.name, r.sub, 'Click to add to your route')}`}); });
   if(pinStart) out.push({id: '__start', lat: rt.start.lat, lng: rt.start.lng, label: `Start: ${rt.startName || 'the spot you chose'}`, cls: 'stop start', pc: 'var(--accent)',
     html: `<span class="pm-dot"><span class="pm-emo">▶</span></span><span class="pm-name">${esc(rt.startName || 'Start')}</span>`});
   else if(rt.start) out.push({id: '__start', lat: rt.start.lat, lng: rt.start.lng, label: 'Start: where you are', cls: 'me', pc: '#2f6fdb', html: '<span class="pm-dot"><span class="pm-emo"></span></span>'});
@@ -7965,22 +8015,25 @@ async function routeSearch(text){
     rt.results = null; rt.linkMsg = "That isn't a Google Maps link. Paste a link from Google Maps, or type the place's name."; renderRoute(); return;
   }
   rt.q = text;
-  if(!text){ rt.results = null; renderRoute(); return; }
+  if(!text){ rt.results = null; renderRoute(); refreshRoutePins(); return; }
   const mine = places.filter(p=>validLatLng(p.lat, p.lng) && norm(p.name || '').includes(norm(text))).slice(0, 6)
     .map(p=>({placeId: p.id, name: p.name || 'Place', lat: p.lat, lng: p.lng, emoji: placeEmoji(p), sub: p.address || 'Your place'}));
   rt.results = {mine, found: null}; rt.searching = true; renderRoute();
   if(rtSearchCtl) rtSearchCtl.abort();
   const ctl = rtSearchCtl = new AbortController();
   let found = [];
-  const shape = list=>list.filter(r=>validLatLng(r.lat, r.lng) && !mine.some(m=>sameSpot(m, r))).slice(0, 8)
+  const shape = list=>list.filter(r=>validLatLng(r.lat, r.lng) && !mine.some(m=>sameSpot(m, r))).slice(0, 60)
     .map(r=>({name: r.name, lat: r.lat, lng: r.lng, emoji: r.emoji || (r.categories && r.categories.length ? emojiForCategories(r.categories) : '📍'), sub: r.address || ''}));
   // show what the quickest search finds straight away; the rest joins in when it's ready
   const partial = [];
   const part = list=>{
     if(ctl !== rtSearchCtl || !list || !list.length) return;
     for(const x of list) if(!partial.some(o=>Math.abs(o.lat - x.lat) < 0.0008 && Math.abs(o.lng - x.lng) < 0.0008)) partial.push(x);
-    rt.results = {mine, found: shape(partial)}; renderRoute();
+    rt.results = {mine, found: shape(partial)}; renderRoute(); refreshRoutePins();
   };
+  // also: every place with that name in the part of the map you're looking at (all the Lidls in town)
+  rt.resAll = false;
+  const areaP = HOST && HOST.searchArea && plMap && plMap.bounds ? HOST.searchArea(text, plMap.bounds(), ctl.signal).then(l=>{ part(l); return l; }).catch(()=>[]) : Promise.resolve([]);
   try{
     const [clat, clng] = rt.start ? [rt.start.lat, rt.start.lng] : plMap.center();
     if(HOST && HOST.searchPlaces) found = await HOST.searchPlaces(text, clat, clng, ctl.signal, part);
@@ -7994,11 +8047,16 @@ async function routeSearch(text){
       }
     }
   }catch(e){ if(ctl.signal.aborted) return; }
+  let area = []; try{ area = await areaP; }catch(e){}
   if(ctl !== rtSearchCtl) return;
   rt.searching = false;
-  rt.results = {mine, found: (found && found.length) || !(rt.results && rt.results.found && rt.results.found.length) ? shape(found || []) : rt.results.found};
-  renderRoute();
+  const all = [];
+  for(const x of [...(found || []), ...(area || [])]) if(x && validLatLng(x.lat, x.lng) && !all.some(o=>Math.abs(o.lat - x.lat) < 0.0008 && Math.abs(o.lng - x.lng) < 0.0008)) all.push(x);
+  rt.results = {mine, found: all.length || !(rt.results && rt.results.found && rt.results.found.length) ? shape(all) : rt.results.found};
+  renderRoute(); refreshRoutePins();
 }
+// search results as pins on the map while planning: tap one to add it as a stop
+function refreshRoutePins(){ if(rt.on && plMap) plMap.setMarkers(routeMarkers()); }
 // the list of your places to start from (nearest to the map first), with a small filter box
 function startPickHTML(){
   const q = norm(rt.startQ || ''), c = plMap ? plMap.center() : [50.08, 14.43];
@@ -8109,7 +8167,7 @@ function renderRoute(){
     <form class="rt-add" id="rtAdd"><input id="rtQ" type="search" enterkeyhint="search" autocomplete="off" placeholder="Shop name or Google Maps link…" aria-label="Add a shop or place, or paste a Google Maps link" value="${esc(rt.q)}"><button type="submit" class="pc-btn"${rt.searching ? ' aria-busy="true"' : ''}>${rt.searching ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}Find</button></form>
     ${rt.linkMsg ? `<div class="rt-empty" role="status">${rt.searching ? '<span class="busy-spin" aria-hidden="true"></span>' : ''}${esc(rt.linkMsg)}</div>` : ''}
     ${R ? `<div class="rt-res">${R.mine.length ? `<div class="rt-sec">Your places</div>${R.mine.map((r, i)=>resRow(r, 'm', i)).join('')}` : ''}
-      ${R.found ? (R.found.length ? `<div class="rt-sec">On the map</div>${R.found.map((r, i)=>resRow(r, 'f', i)).join('')}${rt.searching ? '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Looking for more…</div>' : ''}` : (R.mine.length ? '' : '<div class="rt-empty">Nothing found. Try another name, or tap the place on the map.</div>')) : '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Searching…</div>'}</div>` : ''}
+      ${R.found ? (R.found.length ? `<div class="rt-sec">On the map${R.found.length > 1 ? ` · ${R.found.length}` : ''}</div>${R.found.slice(0, rt.resAll ? 60 : 8).map((r, i)=>resRow(r, 'f', i)).join('')}${R.found.length > 8 && !rt.resAll ? `<button type="button" class="rt-more" id="rtResAll">Show all ${R.found.length} · they’re also pins on the map</button>` : ''}${rt.searching ? '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Looking for more…</div>' : ''}` : (R.mine.length ? '' : '<div class="rt-empty">Nothing found. Try another name, or tap the place on the map.</div>')) : '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Searching…</div>'}</div>` : ''}
     <div class="rt-hint">Or tap any of your pins, or any shop on the map, to add it. Tap a numbered pin to take it off.</div>
     ${rt.stops.length ? `<ol class="rt-stops">${rt.start ? `<li class="rt-startrow"><span class="rt-n">▶</span><span class="rt-nm"><b>${rt.startSrc==='gps' ? '📍 Where you are now' : esc(rt.startName || 'The spot you chose on the map')}</b><small>Start</small></span></li>` : ''}${ordered.map((s, i)=>{ const leg = res && res.legs[i];
         const tr = leg && rt.mode==='transit' && leg.tr;
@@ -8150,10 +8208,11 @@ function renderRoute(){
   if(wh) wh.onchange = ()=>{ const t = wh.value ? new Date(wh.value).getTime() : NaN; rt.leaveAt = isFinite(t) && t > Date.now() + 60e3 ? t : null; rt.res = null; replanIfAsked(); };
   const q = box.querySelector('#rtQ');
   box.querySelector('#rtAdd').onsubmit = e=>{ e.preventDefault(); routeSearch(q.value); };
-  q.oninput = debounce(()=>{ if(q.value.trim().length >= 2) routeSearch(q.value); else if(!q.value.trim()){ rt.q = ''; rt.results = null; renderRoute(); } }, 350);
+  q.oninput = debounce(()=>{ if(q.value.trim().length >= 2) routeSearch(q.value); else if(!q.value.trim()){ rt.q = ''; rt.results = null; renderRoute(); refreshRoutePins(); } }, 350);
   q.addEventListener('paste', e=>{ const t = ((e.clipboardData && e.clipboardData.getData('text')) || '').trim(); if(/^https?:\/\//i.test(t)) setTimeout(()=>routeSearch(q.value), 0); });
   if(typing){ q.focus(); try{ q.setSelectionRange(caret, caret); }catch(e){} }
   if(typingS){ const n = box.querySelector('#rtStartQ'); if(n){ n.focus(); try{ n.setSelectionRange(caretS, caretS); }catch(e){} } }
+  const ra = box.querySelector('#rtResAll'); if(ra) ra.onclick = ()=>{ rt.resAll = true; renderRoute(); };
   box.querySelectorAll('[data-add]').forEach(b=>b.onclick = ()=>{ const [kind, i] = b.dataset.add.split(':'); const r = (kind==='m' ? R.mine : R.found)[+i]; if(r) addStop(r); });
   box.querySelectorAll('[data-rm]').forEach(b=>b.onclick = ()=>removeStop(b.dataset.rm));
   box.querySelectorAll('[data-done]').forEach(b=>b.onclick = ()=>doneHere(b.dataset.done));
@@ -8474,10 +8533,11 @@ function renderPickBar(){
           <a class="pc-btn" href="https://www.google.com/maps/search/${encodeURIComponent([plPick.inText, plPick.guessCity].filter(Boolean).join(' '))}${plPick.searchAt ? `/@${plPick.searchAt[0].toFixed(5)},${plPick.searchAt[1].toFixed(5)},13z` : ''}" target="_blank" rel="noopener noreferrer">${GMAPS_SVG}Look it up in Google Maps</a>
           <small>Found it there? Copy its link and paste it in the box above. Or tap the map where it is.</small>
         </div>` : ''}
-      ${res && !(plPick.nothingNear && !plPick.listOpen) ? `<div class="pp-results${plPick.previewI != null && !plPick.listOpen ? ' folded' : ''}">${res.length ? res.map((r,i)=>plPick.previewI != null && !plPick.listOpen && i!==plPick.previewI ? '' : `<button type="button" data-i="${i}"${i===plPick.previewI ? ' class="on"' : ''}><span class="rr-e">${esc(r.emoji)}</span><span class="rr-t"><b>${esc(r.name)}${savedNear(r, r.name) ? '<span class="rr-saved">✓ Saved</span>' : ''}</b><small>${esc([r.kind, r.address].filter(Boolean).join(' · '))}</small></span>${i===plPick.previewI ? '<span class="rr-on">on the map<br>tap to save</span>' : `<span class="rr-see" data-see="${i}" role="button" tabindex="0" title="Show it on the map" aria-label="Show ${esc(r.name)} on the map">${'<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4"/></svg>'}</span>`}</button>`).join('')
+      ${res && !(plPick.nothingNear && !plPick.listOpen) && !(plPick.manyInView && !plPick.listOpen && plPick.previewI == null) ? `<div class="pp-results${plPick.previewI != null && !plPick.listOpen ? ' folded' : ''}">${res.length ? res.map((r,i)=>plPick.previewI != null && !plPick.listOpen && i!==plPick.previewI ? '' : `<button type="button" data-i="${i}"${i===plPick.previewI ? ' class="on"' : ''}><span class="rr-e">${esc(r.emoji)}</span><span class="rr-t"><b>${esc(r.name)}${savedNear(r, r.name) ? '<span class="rr-saved">✓ Saved</span>' : ''}</b><small>${esc([r.kind, r.address].filter(Boolean).join(' · '))}</small></span>${i===plPick.previewI ? '<span class="rr-on">on the map<br>tap to save</span>' : `<span class="rr-see" data-see="${i}" role="button" tabindex="0" title="Show it on the map" aria-label="Show ${esc(r.name)} on the map">${'<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4"/></svg>'}</span>`}</button>`).join('')
         : '<div class="pp-none">Nothing found. Try adding the city, or tap the map.</div>'}</div>
         ` : ''}
         ${res && res.length > 1 && plPick.previewI != null ? `<button type="button" class="pp-more" aria-expanded="${plPick.listOpen ? 'true' : 'false'}">${plPick.listOpen ? 'Hide other results ▴' : `Other results (${res.length - 1}) ▾`}</button>` : ''}
+        ${res && plPick.manyInView && plPick.previewI == null ? `<button type="button" class="pp-more" aria-expanded="${plPick.listOpen ? 'true' : 'false'}">${plPick.listOpen ? 'Hide the list ▴ (they’re pins on the map too)' : `📍 ${plPick.manyInView} found in this part of the map: tap one on the map, or show the list ▾`}</button>` : ''}
         ${res && res.length && plPick.nothingNear ? `<button type="button" class="pp-more" aria-expanded="${plPick.listOpen ? 'true' : 'false'}">${plPick.listOpen ? 'Hide far-away places ▴' : `Places with that name far from here (${res.length}) ▾`}</button>` : ''}`;
     const inp = bar.querySelector('#plPickIn');
     const go = ()=>{ const t = inp.value.trim(); if(!t || plPick.importing) return; if(socialLink(t)){ useSocialLink(t); return; } const r = parsePlaceLink(t); if(r) usePlaceLink(t); else searchPlacesByName(t); };
