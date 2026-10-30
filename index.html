@@ -1254,7 +1254,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .nav-item.dragging{transition:none !important;z-index:3;cursor:grabbing;background:var(--card) !important;color:var(--ink);
     box-shadow:0 6px 18px rgba(0,0,0,.2), 0 0 0 1px var(--line);}
   .nav-item.holding{background:color-mix(in srgb, var(--ink) 10%, transparent);}
-  .side-hint{margin-top:8px;padding:6px 8px 2px;font-size:0.7rem;line-height:1.35;color:var(--muted);opacity:.8;white-space:normal;}
+  .side-hint{margin-top:8px;padding:6px 4px 2px;font-size:0.72rem;line-height:1.35;color:var(--muted);opacity:.8;white-space:nowrap;text-align:center;overflow:hidden;text-overflow:ellipsis;}
   .side.collapsed .side-hint{display:none;}
   @media (prefers-reduced-motion:reduce){ .side.reordering .nav-item{transition:none;} }
   .side.collapsed .brand,.side.collapsed .nav-label,.side.collapsed .nav-n{opacity:0;pointer-events:none;}
@@ -1796,6 +1796,9 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-credit{display:block;margin-top:4px;}
   .rt-credit a{color:inherit;}
   .rt-stops li.rt-startrow{border-style:dashed;background:none;}
+  .play-ic{width:9px;height:9px;display:block;}
+  .pm-emo .play-ic{width:13px;height:13px;}
+  .rt-startrow .rt-ic{flex:0 0 auto;font-size:1rem;line-height:1;align-self:center;}
   .rt-startrow .rt-n{font-size:0.62rem;padding-left:1px;}
   .rt-x{flex:0 0 auto;border:none;background:none;color:var(--muted);font-size:1.1rem;cursor:pointer;padding:0 4px;}
   .rt-sum{padding:8px 10px;border-radius:6px;background:color-mix(in srgb, var(--accent) 10%, transparent);font-size:0.84rem;}
@@ -2185,7 +2188,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   <button type="button" class="nav-item" data-mod="notes" onclick="switchModule('notes')" title="Notes"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3.5 3.5v11.5H5z"/><path d="M12 2.5V6h3.5M7.5 10h5.5M7.5 13h5.5"/></svg><span class="nav-label">Notes</span><span class="nav-n" id="navN_notes"></span></button>
   <button type="button" class="nav-item" data-mod="places" onclick="switchModule('places')" title="Places"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17.5s5.5-5.2 5.5-9.3a5.5 5.5 0 00-11 0c0 4.1 5.5 9.3 5.5 9.3z"/><circle cx="10" cy="8.2" r="2"/></svg><span class="nav-label">Places</span><span class="nav-n" id="navN_places"></span></button>
   <button type="button" class="nav-item nav-ext" data-mod="globe" onclick="openGlobe()" title="God's Eye View (opens in a new tab; runs on your computer)"><svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7.5"/><path d="M2.5 10h15M10 2.5c2.2 2.3 3.2 4.8 3.2 7.5s-1 5.2-3.2 7.5c-2.2-2.3-3.2-4.8-3.2-7.5s1-5.2 3.2-7.5z"/></svg><span class="nav-label">Globe <span class="nav-extmark" aria-hidden="true">↗</span></span><span class="nav-n"></span></button>
-  <div class="side-hint" id="sideHint">Hold a module and drag it to reorder</div>
+  <div class="side-hint" id="sideHint">Hold and drag to reorder</div>
 </nav>
 <div class="side-backdrop" id="sideBackdrop" onclick="toggleSide(false)"></div>
 <div class="wrap">
@@ -7651,7 +7654,7 @@ function routeMarkers(){
     out.push({id: '__rf_' + i, lat: r.lat, lng: r.lng, label: `${r.name} (tap to add to your route)`, cls: 'res', pc: 'var(--accent)',
               html: `<span class="pm-dot"><span class="pm-emo">${esc(r.emoji || '📍')}</span></span>${pinTip(r.name, r.sub, 'Click to add to your route')}`}); });
   if(pinStart) out.push({id: '__start', lat: rt.start.lat, lng: rt.start.lng, label: `Start: ${rt.startName || 'the spot you chose'}`, cls: 'stop start', pc: 'var(--accent)',
-    html: `<span class="pm-dot"><span class="pm-emo">▶</span></span><span class="pm-name">${esc(rt.startName || 'Start')}</span>`});
+    html: `<span class="pm-dot"><span class="pm-emo"><svg class="play-ic" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.4 L9 5 L3 8.6Z" fill="currentColor"/></svg></span></span><span class="pm-name">${esc(rt.startName || 'Start')}</span>`});
   else if(rt.start) out.push({id: '__start', lat: rt.start.lat, lng: rt.start.lng, label: 'Start: where you are', cls: 'me', pc: '#2f6fdb', html: '<span class="pm-dot"><span class="pm-emo"></span></span>'});
   return out;
 }
@@ -8207,7 +8210,7 @@ function renderRoute(){
     ${R ? `<div class="rt-res">${R.mine.length ? `<div class="rt-sec">Your places</div>${R.mine.map((r, i)=>resRow(r, 'm', i)).join('')}` : ''}
       ${R.found ? (R.found.length ? `<div class="rt-sec">${rt.resFar ? 'Nothing near here · further away' : 'On the map'}${R.found.length > 1 ? ` · ${R.found.length}` : ''}</div>${R.found.slice(0, rt.resAll ? 60 : 8).map((r, i)=>resRow(r, 'f', i)).join('')}${R.found.length > 8 && !rt.resAll ? `<button type="button" class="rt-more" id="rtResAll">Show all ${R.found.length} · they’re also pins on the map</button>` : ''}${rt.searching ? '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Looking for more…</div>' : ''}` : (R.mine.length ? '' : '<div class="rt-empty">Nothing found. Try another name, or tap the place on the map.</div>')) : '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Searching…</div>'}</div>` : ''}
     <div class="rt-hint">Or tap any of your pins, or any shop on the map, to add it. Tap a numbered pin to take it off.</div>
-    ${rt.stops.length ? `<ol class="rt-stops">${rt.start ? `<li class="rt-startrow"><span class="rt-n">▶</span><span class="rt-nm"><b>${rt.startSrc==='gps' ? '📍 Where you are now' : esc(rt.startName || 'The spot you chose on the map')}</b><small>Start</small></span></li>` : ''}${ordered.map((s, i)=>{ const leg = res && res.legs[i];
+    ${rt.stops.length ? `<ol class="rt-stops">${rt.start ? `<li class="rt-startrow"><span class="rt-n"><svg class="play-ic" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.4 L9 5 L3 8.6Z" fill="currentColor"/></svg></span>${rt.startSrc==='gps' ? '<span class="rt-ic" aria-hidden="true">📍</span>' : ''}<span class="rt-nm"><b>${rt.startSrc==='gps' ? 'Where you are now' : esc(rt.startName || 'The spot you chose on the map')}</b><small>Start</small></span></li>` : ''}${ordered.map((s, i)=>{ const leg = res && res.legs[i];
         const tr = leg && rt.mode==='transit' && leg.tr;
         return `<li class="${tr ? 'has-tr' : ''}"><span class="rt-n">${i + 1}</span><span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? (res.busyFrom != null && i >= res.busyFrom ? '<small class="rt-upd"><span class="busy-spin" aria-hidden="true"></span>Updating times…</small>' : trLegHtml(tr, i===0, leg, res.order[i] != null ? i : i)) : `<small>${leg ? (roadMode() ? `${fmtDur(leg.dur)} ${rt.mode==='car' ? 'drive' : 'walk'} · ${fmtDist(leg.dist)}${leg.delay >= 60 ? ` · <span class="rt-late">+${Math.round(leg.delay / 60)} min traffic</span>` : ''}${res.est && !(res.traffic && !res.traffic.failed) ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
           ${i===0 && res && rt.start ? `<button type="button" class="rt-done" data-done="${esc(s.k)}">✓ Done here</button>` : ''}</span>
