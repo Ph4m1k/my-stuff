@@ -1812,6 +1812,10 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .pm-pin.hit .pm-name{display:block;}
   .pm-pin.res .pm-dot{background:var(--card);border:2px solid var(--accent);transform:translateY(4.3px) rotate(-45deg) scale(.82);}   /* smaller, tip still on the spot */
   .pm-pin.res:hover .pm-dot{transform:translateY(1.2px) rotate(-45deg) scale(.95);}
+  .rt-res button.on{background:color-mix(in srgb, var(--accent) 12%, transparent);}
+  .rt-added{margin-left:auto;flex:0 0 auto;color:var(--accent);font-size:0.72rem;font-weight:700;white-space:nowrap;}
+  .rt-addp{margin-left:auto;flex:0 0 auto;color:var(--muted);font-size:1rem;}
+  .places.route .rt-go.static{position:static;box-shadow:none;}
   .rt-more{margin:4px 6px 6px;padding:6px 10px;border:1px dashed var(--line);border-radius:6px;background:none;color:var(--accent);font:inherit;font-size:0.78rem;cursor:pointer;text-align:left;}
   .pm-pin.dim:hover .pm-dot{opacity:.85;}
   .pm-pin.stop .pm-dot{background:var(--accent);border-color:var(--paper);}
@@ -7572,7 +7576,7 @@ function addStop(st){
   if(dup){ toast(`“${dup.name}” is already on your route.`); return; }
   if(rt.stops.length >= 12){ toast('A route can have up to 12 stops.'); return; }
   rt.stops.push({k: st.placeId || ('s' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)), placeId: st.placeId || '', name: st.name || 'Stop', lat: +st.lat, lng: +st.lng, emoji: st.emoji || '📍'});
-  rt.results = null; rt.q = ''; saveRt(); stopsChanged();
+  saveRt(); stopsChanged();                                   // the search stays open: pick as many of the results as you like
   toast(rt.on ? `Added “${st.name || 'stop'}” to your route.` : `Added “${st.name || 'stop'}” to your route (${rt.stops.length} ${rt.stops.length===1 ? 'stop' : 'stops'}). Tap 🧭 Route to plan it.`);
 }
 function removeStop(k){
@@ -8168,7 +8172,9 @@ function renderRoute(){
   const srcOn = rt.setStart ? 'map' : rt.startPick ? 'find' : rt.locating ? 'gps' : !rt.start ? ''
     : rt.startSrc==='gps' ? 'gps' : rt.startSrc==='map' ? 'map' : rt.startSrc==='place' ? (rt.startVia==='map' ? 'map' : 'find') : '';
   const R = rt.results;
-  const resRow = (r, kind, i)=>`<button type="button" data-add="${kind}:${i}"><span>${esc(r.emoji || '📍')}</span><span><b>${esc(r.name)}</b>${r.sub ? `<small>${esc(r.sub)}</small>` : ''}</span></button>`;
+  const onRt = r=>rt.stops.find(x=>(r.placeId && x.placeId===r.placeId) || sameSpot(x, r));
+  const resRow = (r, kind, i)=>{ const st = onRt(r);
+    return `<button type="button" data-add="${kind}:${i}" class="${st ? 'on' : ''}" aria-pressed="${!!st}"><span>${esc(r.emoji || '📍')}</span><span><b>${esc(r.name)}</b>${r.sub ? `<small>${esc(r.sub)}</small>` : ''}</span>${st ? `<span class="rt-added">✓ Stop ${stopNumber(st.k)}</span>` : '<span class="rt-addp">＋</span>'}</button>`; };
   box.innerHTML = `
     <div class="rt-head"><b>Plan a route</b><button type="button" class="rt-min" id="rtMin" aria-expanded="${rt.mini ? 'false' : 'true'}">${rt.mini ? 'Show ▴' : 'Smaller ▾'}</button></div>
     <div class="rt-modes" role="radiogroup" aria-label="How you travel">
@@ -8208,7 +8214,7 @@ function renderRoute(){
         : res.trOk ? `<div class="rt-sum">≈ <b>${fmtDur(Math.max(0, (res.arrive - (res.leave || Date.now())) / 1000))}</b> by public transport${rt.leaveAt ? `, leaving ${esc(fmtWhen(res.leave))}` : ''} · at your last stop around <b>${fmtClock(res.arrive)}</b>.<small>Times for later stops assume you leave as soon as you arrive. When you’re finished at a stop, tap <b>✓ Done here</b> for fresh times from where you are.${res.trOk < res.legs.length ? ' For steps without a connection, tap <b>Go</b> for Google Maps.' : ''}</small><small class="rt-credit">Connections: <a href="https://transitous.org" target="_blank" rel="noopener noreferrer">Transitous</a> · <a href="${TRANSITOUS_SOURCES}" target="_blank" rel="noopener noreferrer">timetable sources</a></small></div>`
         : `<div class="rt-sum">Stops in the shortest order (${fmtDist(res.total.dist)} in all).<small>${HOST ? 'Couldn’t get tram, metro and bus times right now.' : 'Tram, metro and bus times work in the app version (outside Claude).'} Tap <b>Go</b> at each stop for public transport directions in Google Maps.</small></div>`)
       : rt.busy ? '<div class="rt-sum"><span class="busy-spin" aria-hidden="true"></span>Working out the quickest order…</div>'
-      : rt.stops.length && !rt.asked && !rt.startPick && !rt.results ? `<div class="rt-go"><button type="button" class="pc-btn pc-main" id="rtPlan"${rt.start ? '' : ' disabled'}>🧭 Plan my route${rt.stops.length > 1 ? ` · ${rt.stops.length} stops` : ''}</button><small>${rt.start ? 'Add all your stops first, then press this to get the quickest order.' : 'Set where you start (above) first.'}</small></div>`
+      : rt.stops.length && !rt.asked && !rt.startPick ? `<div class="rt-go${rt.results ? ' static' : ''}"><button type="button" class="pc-btn pc-main" id="rtPlan"${rt.start ? '' : ' disabled'}>🧭 Plan my route${rt.stops.length > 1 ? ` · ${rt.stops.length} stops` : ''}</button><small>${rt.start ? 'Add all your stops first, then press this to get the quickest order.' : 'Set where you start (above) first.'}</small></div>`
       : rt.stops.length && !rt.start ? '<div class="rt-sum">Set where you start (above), and I’ll work out the order.</div>' : ''}
     ${rt.stops.length ? `<div class="rt-acts">${res && rt.start ? gmRouteButtons(rt.start, ordered, rt.mode) : ''}
       <button type="button" class="pc-btn" id="rtClear">Clear route</button></div>` : ''}`;
@@ -8238,7 +8244,8 @@ function renderRoute(){
   if(typing){ q.focus(); try{ q.setSelectionRange(caret, caret); }catch(e){} }
   if(typingS){ const n = box.querySelector('#rtStartQ'); if(n){ n.focus(); try{ n.setSelectionRange(caretS, caretS); }catch(e){} } }
   const ra = box.querySelector('#rtResAll'); if(ra) ra.onclick = ()=>{ rt.resAll = true; renderRoute(); };
-  box.querySelectorAll('[data-add]').forEach(b=>b.onclick = ()=>{ const [kind, i] = b.dataset.add.split(':'); const r = (kind==='m' ? R.mine : R.found)[+i]; if(r) addStop(r); });
+  box.querySelectorAll('[data-add]').forEach(b=>b.onclick = ()=>{ const [kind, i] = b.dataset.add.split(':'); const r = (kind==='m' ? R.mine : R.found)[+i]; if(!r) return;
+    const st = onRt(r); if(st) removeStop(st.k); else addStop(r); });              // tap again to take it off
   box.querySelectorAll('[data-rm]').forEach(b=>b.onclick = ()=>removeStop(b.dataset.rm));
   box.querySelectorAll('[data-done]').forEach(b=>b.onclick = ()=>doneHere(b.dataset.done));
   box.querySelectorAll('[data-pick]').forEach(b=>b.onclick = e=>{ e.preventDefault(); const [i, d] = b.dataset.pick.split(':').map(Number); pickConnection(i, d); });
