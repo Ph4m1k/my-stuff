@@ -1752,7 +1752,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-res .rt-sec{padding:5px 9px;font-size:0.7rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);background:var(--card);}
   .rt-hint{color:var(--muted);font-size:0.76rem;}
   .rt-stops{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;}
-  .rt-stops li{display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:var(--paper);}
+  .rt-stops li{position:relative;display:flex;align-items:center;gap:8px;padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:var(--paper);}
   .rt-n{flex:0 0 22px;height:22px;border-radius:50%;background:var(--accent);color:var(--paper);display:inline-flex;align-items:center;justify-content:center;font-size:0.74rem;font-weight:700;}
   .rt-nm{flex:1;min-width:0;}
   .rt-nm b{display:block;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -7602,7 +7602,26 @@ function toggleFixed(k){
   s.fixed = !s.fixed;
   rt.stops.splice(nf, 0, s);                                  // pinning: joins the end of the pinned ones; unpinning: first of the rest
   saveRt();
-  if(rt.asked){ rt.res = null; planSoon(true); drawRoute(); renderPlaces(); } else { drawRoute(); renderPlaces(); }
+  const was = rowRects();
+  if(rt.asked){ rt.res = null; planSoon(true); }
+  drawRoute(); renderPlaces();
+  slideRows(was, k);
+}
+// where each stop row is on screen, so a moved row can glide to its new place instead of jumping
+function rowRects(){ const m = {}; document.querySelectorAll('#rtPanel .rt-stops li[data-k]').forEach(li=>{ m[li.dataset.k] = li.getBoundingClientRect().top; }); return m; }
+function slideRows(was, moved){
+  if(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  document.querySelectorAll('#rtPanel .rt-stops li[data-k]').forEach(li=>{
+    const from = was[li.dataset.k]; if(from == null) return;
+    const dy = from - li.getBoundingClientRect().top;
+    const me = li.dataset.k===moved;
+    if(!dy && !me) return;
+    li.animate(me
+      ? [{transform: `translateY(${dy}px) scale(1.03)`, boxShadow: '0 6px 18px rgba(0,0,0,.35)', zIndex: 2}, {transform: 'translateY(0) scale(1)', boxShadow: '0 0 0 rgba(0,0,0,0)', zIndex: 2}]
+      : [{transform: `translateY(${dy}px)`}, {transform: 'translateY(0)'}],
+      {duration: me ? 380 : 300, easing: 'cubic-bezier(.2,.8,.2,1)'});
+    if(me){ const n = li.querySelector('.rt-n'); if(n) n.animate([{transform: 'scale(.6)'}, {transform: 'scale(1.25)'}, {transform: 'scale(1)'}], {duration: 380, easing: 'ease-out'}); }
+  });
 }
 function removeStop(k){
   const i = rt.stops.findIndex(x=>x.k===k); if(i < 0) return;
@@ -8247,7 +8266,7 @@ function renderRoute(){
         const badge = rt.stops.length > 1
           ? `<button type="button" class="${nCls} rt-nb" data-fix="${esc(s.k)}" aria-pressed="${!!s.fixed}" title="${s.fixed ? `You chose this as stop ${i + 1}. Tap to let the planner decide` : 'Tap to make this your next stop in your own order'}" aria-label="${s.fixed ? `Stop ${i + 1}, chosen by you. Tap to undo` : `Choose ${esc(s.name)} as the next stop in your order`}">${num}</button>`
           : `<span class="${nCls}">${num}</span>`;
-        return `<li class="${tr ? 'has-tr' : ''}${s.fixed ? ' fixed' : ''}">${badge}<span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? (res.busyFrom != null && i >= res.busyFrom ? '<small class="rt-upd"><span class="busy-spin" aria-hidden="true"></span>Updating times…</small>' : trLegHtml(tr, i===0, leg, res.order[i] != null ? i : i)) : `<small>${leg ? (roadMode() ? `${fmtDur(leg.dur)} ${rt.mode==='car' ? 'drive' : 'walk'} · ${fmtDist(leg.dist)}${leg.delay >= 60 ? ` · <span class="rt-late">+${Math.round(leg.delay / 60)} min traffic</span>` : ''}${res.est && !(res.traffic && !res.traffic.failed) ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
+        return `<li data-k="${esc(s.k)}" class="${tr ? 'has-tr' : ''}${s.fixed ? ' fixed' : ''}">${badge}<span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? (res.busyFrom != null && i >= res.busyFrom ? '<small class="rt-upd"><span class="busy-spin" aria-hidden="true"></span>Updating times…</small>' : trLegHtml(tr, i===0, leg, res.order[i] != null ? i : i)) : `<small>${leg ? (roadMode() ? `${fmtDur(leg.dur)} ${rt.mode==='car' ? 'drive' : 'walk'} · ${fmtDist(leg.dist)}${leg.delay >= 60 ? ` · <span class="rt-late">+${Math.round(leg.delay / 60)} min traffic</span>` : ''}${res.est && !(res.traffic && !res.traffic.failed) ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
           ${i===0 && res && rt.start ? `<button type="button" class="rt-done" data-done="${esc(s.k)}">✓ Done here</button>` : ''}</span>
           ${rt.start && res ? `<a class="rt-dir" href="${esc(gmDir(prevOf(i), s, rt.mode))}" target="_blank" rel="noopener noreferrer" title="${rt.mode==='walk' ? 'Walking' : rt.mode==='car' ? 'Driving' : 'Public transport'} directions in Google Maps" aria-label="Directions to ${esc(s.name)}">${GMAPS_SVG}${roadMode() ? '' : 'Go'}</a>` : ''}
           <button type="button" class="rt-x" data-rm="${esc(s.k)}" aria-label="Take ${esc(s.name)} off the route" title="Take it off">×</button></li>`; }).join('')}</ol>`
