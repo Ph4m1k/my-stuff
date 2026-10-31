@@ -1801,16 +1801,12 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-startrow .rt-ic{flex:0 0 auto;font-size:1rem;line-height:1;align-self:center;}
   .rt-startrow .rt-n{font-size:0.62rem;padding-left:1px;}
   .rt-n.none{background:none;border:2px dashed var(--accent);opacity:.75;}
-  .rt-stops li.rt-pos{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--accent);border-top:none;border-radius:0 0 6px 6px;background:color-mix(in srgb, var(--accent) 10%, var(--paper));font-size:0.8rem;margin-top:-6px;}
-  .rt-stops li.choosing{border-color:var(--accent);border-radius:6px 6px 0 0;}
-  .rt-pos-l{color:var(--muted);}
-  .rt-pos-ns{display:flex;flex-wrap:wrap;gap:4px;}
-  .rt-pos-ns button{width:28px;height:28px;border-radius:50%;border:2px solid var(--accent);background:none;color:var(--ink);font:inherit;font-weight:700;cursor:pointer;}
-  .rt-pos-ns button.taken{border-style:dashed;opacity:.6;}
-  .rt-pos-ns button:hover{background:color-mix(in srgb, var(--accent) 25%, transparent);opacity:1;}
-  .rt-pos-ns button.on{background:var(--accent);color:var(--paper);opacity:1;border-style:solid;}
-  .rt-pos-q{margin-left:auto;border:1px solid var(--line);background:none;color:var(--ink);font:inherit;padding:4px 9px;border-radius:14px;cursor:pointer;}
-  .rt-pos-q.on{border-color:var(--accent);color:var(--accent);}
+  .rt-stops{position:relative;}
+  .rt-grip{flex:0 0 auto;align-self:stretch;display:flex;align-items:center;margin:-7px -4px -7px -6px;padding:0 4px 0 6px;color:var(--muted);opacity:.55;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;font-size:1rem;line-height:1;}
+  .rt-grip:hover{opacity:1;}
+  @media (hover:hover){ .rt-stops li[data-k]{cursor:grab;} .rt-stops li[data-k] button,.rt-stops li[data-k] a{cursor:pointer;} }
+  .rt-stops li.dragging{z-index:5;box-shadow:0 10px 24px rgba(0,0,0,.45);border-color:var(--accent);}
+  body.rt-dragging, body.rt-dragging *{cursor:grabbing !important;user-select:none !important;-webkit-user-select:none !important;}
   .rt-n.calc{background:none;border:2px solid var(--accent);color:var(--accent);}    /* worked out by the planner */
   .rt-nb{padding:0;border:none;cursor:pointer;font-family:inherit;transition:transform .12s, opacity .12s;}
   .rt-nb.none,.rt-nb.calc{border:2px dashed var(--accent);}
@@ -7620,38 +7616,95 @@ function addStop(st){
   toast(rt.on ? `Added “${st.name || 'stop'}” to your route.` : `Added “${st.name || 'stop'}” to your route (${rt.stops.length} ${rt.stops.length===1 ? 'stop' : 'stops'}). Tap 🧭 Route to plan it.`);
 }
 // tap a stop's circle: choose which number it is in the route (1, 2, 3…), or "Quickest" to let the planner place it
-function posRow(s){
-  if(rt.posFor !== s.k) return '';
-  const N = rt.stops.length;
-  const nums = Array.from({length: N}, (_, i)=>i + 1).map(n=>{ const other = rt.stops.find(x=>x!==s && x.pos===n);
-    return `<button type="button" data-pos="${n}" class="${s.pos===n ? 'on' : ''}${other ? ' taken' : ''}" aria-pressed="${s.pos===n}" title="${other ? `Stop ${n} is now “${esc(other.name)}”${s.pos ? '; they’ll swap' : ''}` : `Make it stop ${n}`}">${n}</button>`; }).join('');
-  return `<li class="rt-pos" role="group" aria-label="Which stop number is ${esc(s.name)}?"><span class="rt-pos-l">Go here as stop</span><span class="rt-pos-ns">${nums}</span><button type="button" class="rt-pos-q${s.pos ? '' : ' on'}" data-pos="0" title="Let the planner put it where it’s quickest">⚡ Quickest</button></li>`;
-}
-function openPos(k){
-  rt.posFor = rt.posFor===k ? null : k; renderPlaces();
-  const row = rt.posFor && document.querySelector('#rtPanel .rt-pos');
-  if(row && row.scrollIntoView) row.scrollIntoView({block: 'nearest', behavior: 'smooth'});
-}
-function setPos(k, n){
-  const s = rt.stops.find(x=>x.k===k); if(!s) return;
-  if(n){
-    const other = rt.stops.find(x=>x!==s && x.pos===n);
-    if(other){ if(s.pos) other.pos = s.pos; else delete other.pos; }   // that number was taken: swap (or the other one goes back to "quickest")
-    s.pos = n;
-  }else delete s.pos;
-  rt.posFor = null;
-  saveRt();
+// the circle: tap an empty one to keep that stop where it is now (it gets its number); tap a number to let the planner place it again
+function lockHere(k){
   const was = rowRects();
-  if(rt.asked){ rt.res = null; planSoon(true); }
+  adoptShownOrder();
+  const i = rt.stops.findIndex(x=>x.k===k); if(i < 0) return;
+  const s = rt.stops[i];
+  if(s.pos) delete s.pos; else s.pos = i + 1;
+  saveRt();
+  rt.res = null; if(rt.asked) planSoon(true);
   drawRoute(); renderPlaces();
   slideRows(was, k);
 }
-document.addEventListener('pointerdown', e=>{                // tap anywhere else: close the number chooser
-  if(!rt.posFor || !e.target.closest) return;
-  if(e.target.closest('.rt-pos, .rt-nb')) return;
-  rt.posFor = null; renderPlaces();
-});
-document.addEventListener('keydown', e=>{ if(e.key==='Escape' && rt.posFor){ rt.posFor = null; renderPlaces(); } });
+// once a route is planned the list shows the planned order: make that the list's own order before changing anything
+function adoptShownOrder(){
+  if(rt.res && rt.res.key===routeKey() && rt.res.order.length===rt.stops.length) rt.stops = rt.res.order.map(j=>rt.stops[j - 1]);
+}
+// drag a stop (by its ⠿, or anywhere on the row with a mouse) to where you want it: it gets that number and stays there
+function scrollBox(el){
+  for(let p = el.parentElement; p && p!==document.body; p = p.parentElement){
+    const o = getComputedStyle(p).overflowY; if((o==='auto' || o==='scroll') && p.scrollHeight > p.clientHeight) return p;
+  }
+  return document.scrollingElement || document.documentElement;
+}
+function wireDrag(li){
+  const grip = li.querySelector('.rt-grip'); if(!grip) return;
+  grip.addEventListener('pointerdown', e=>{ if(e.button) return; e.preventDefault(); dragRow(li, e); });
+  li.addEventListener('pointerdown', e=>{                     // mouse: hold anywhere on the row and move a little
+    if(e.pointerType!=='mouse' || e.button || e.target.closest('button, a, input, .rt-grip, .rt-tr, .rt-steps')) return;
+    const y0 = e.clientY, x0 = e.clientX;
+    const mv = ev=>{ if(Math.abs(ev.clientY - y0) + Math.abs(ev.clientX - x0) < 6) return; off(); dragRow(li, e, ev); };
+    const off = ()=>{ window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', off); };
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', off);
+  });
+}
+function dragRow(li, e, now){
+  const list = li.parentElement, k = li.dataset.k, sc = scrollBox(li);
+  const rows = ()=>[...list.querySelectorAll('li[data-k]')];
+  const keys0 = rows().map(x=>x.dataset.k).join();
+  const grabY = e.clientY - li.getBoundingClientRect().top;
+  let y = (now || e).clientY, run = true;
+  rt.drag = {k};
+  try{ getSelection().removeAllRanges(); }catch(_){}
+  li.classList.add('dragging'); document.body.classList.add('rt-dragging');
+  const rowAt = (el, dir)=>{ let x = el[dir]; while(x && !(x.dataset && x.dataset.k)) x = x[dir]; return x; };
+  const flip = (el, fn)=>{ const a = el.getBoundingClientRect().top; fn(); const b = el.getBoundingClientRect().top;
+    if(a !== b) el.animate([{transform: `translateY(${a - b}px)`}, {transform: 'none'}], {duration: 170, easing: 'ease-out'}); };
+  const place = ()=>{
+    const want = y - grabY - list.getBoundingClientRect().top;   // where the row's top should be, inside the list
+    for(let moved = true; moved;){
+      moved = false;
+      const prev = rowAt(li, 'previousElementSibling'), next = rowAt(li, 'nextElementSibling');
+      if(prev && want < prev.offsetTop + prev.offsetHeight / 2){ flip(prev, ()=>list.insertBefore(li, prev)); moved = true; continue; }
+      if(next && want + li.offsetHeight > next.offsetTop + next.offsetHeight / 2){ flip(next, ()=>list.insertBefore(li, next.nextSibling)); moved = true; }
+    }
+    const all = rows(), lo = all[0].offsetTop, hi = all[all.length - 1].offsetTop;
+    li.style.transform = `translateY(${Math.max(lo - 8, Math.min(hi + 8, want)) - li.offsetTop}px)`;
+  };
+  const tick = ()=>{
+    if(!run) return;
+    const whole = sc===document.scrollingElement || sc===document.documentElement;
+    const r = whole ? {top: 0, bottom: innerHeight} : sc.getBoundingClientRect();
+    if(y < r.top + 50) sc.scrollTop -= Math.ceil((r.top + 50 - y) / 5);          // near the edge: the list scrolls along
+    else if(y > r.bottom - 50) sc.scrollTop += Math.ceil((y - r.bottom + 50) / 5);
+    place(); requestAnimationFrame(tick);
+  };
+  const move = ev=>{ y = ev.clientY; };
+  const end = ()=>{
+    run = false;
+    window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end);
+    document.body.classList.remove('rt-dragging');
+    const keys = rows().map(x=>x.dataset.k);
+    if(keys.join()===keys0){                                     // dropped where it was: just settle back
+      const t = li.style.transform; li.style.transform = ''; li.classList.remove('dragging'); rt.drag = null;
+      if(t) li.animate([{transform: t}, {transform: 'none'}], {duration: 180, easing: 'ease-out'});
+      return;
+    }
+    const was = rowRects();
+    adoptShownOrder();
+    rt.stops = keys.map(x=>rt.stops.find(s=>s.k===x)).filter(Boolean);
+    rt.stops.forEach((s, i)=>{ if(s.pos || s.k===k) s.pos = i + 1; });   // the one you moved (and any you'd already placed) keep their spot
+    rt.drag = null;
+    saveRt();
+    rt.res = null; if(rt.asked) planSoon(true);
+    drawRoute(); renderPlaces();
+    slideRows(was, k);
+  };
+  window.addEventListener('pointermove', move); window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
+  requestAnimationFrame(tick);
+}
 // where each stop row is on screen, so a moved row can glide to its new place instead of jumping
 function rowRects(){ const m = {}; document.querySelectorAll('#rtPanel .rt-stops li[data-k]').forEach(li=>{ m[li.dataset.k] = li.getBoundingClientRect().top; }); return m; }
 function slideRows(was, moved){
@@ -7679,7 +7732,7 @@ function doneHere(k){
   const before = {stops: rt.stops.map(x=>({...x})), start: rt.start, startSrc: rt.startSrc, startName: rt.startName};
   const [gone] = rt.stops.splice(i, 1);
   rt.stops.forEach(x=>{ if(x.pos){ x.pos--; if(x.pos < 1) delete x.pos; } });   // one stop done: your 4th stop is now the 3rd
-  rt.posFor = null; saveRt();
+  saveRt();
   rt.start = {lat: gone.lat, lng: gone.lng}; rt.startSrc = 'stop'; rt.startName = gone.name;   // until the phone says where you are
   rt.leaveAt = null;                                        // you're on your way: times from now on
   rt.res = null; planSeq++; clearTimeout(planTimer);
@@ -8288,6 +8341,7 @@ function fmtWhen(t){
 }
 function renderRoute(){
   const box = document.getElementById('rtPanel'); if(!box || !rt.on) return;
+  if(rt.drag) return;                                          // not while you're dragging a stop (it would drop out of your hand)
   document.getElementById('placesView').classList.toggle('rt-mini', rt.mini);
   const count = document.getElementById('count'); if(count) count.textContent = rt.stops.length ? `${rt.stops.length} ${rt.stops.length===1 ? 'stop' : 'stops'}` : '';
   const typing = document.activeElement && document.activeElement.id==='rtQ', caret = typing ? document.activeElement.selectionStart : 0;
@@ -8336,12 +8390,13 @@ function renderRoute(){
         // the circle: tap it to say "this one next, in my order" (it gets its number); tap again to let the planner choose
         const nCls = `rt-n${s.pos ? ' mine' : num ? ' calc' : ' none'}`;
         const badge = rt.stops.length > 1
-          ? `<button type="button" class="${nCls} rt-nb" data-fix="${esc(s.k)}" aria-expanded="${rt.posFor===s.k}" title="${s.pos ? `You chose this as stop ${s.pos}. Tap to change` : 'Tap to choose which stop number this is'}" aria-label="${s.pos ? `Stop ${s.pos}, chosen by you. Tap to change` : `Choose the stop number for ${esc(s.name)}`}">${num}</button>`
+          ? `<button type="button" class="${nCls} rt-nb" data-lock="${esc(s.k)}" aria-pressed="${!!s.pos}" title="${s.pos ? `You put this at stop ${s.pos}. Tap to let the planner place it` : 'Tap to keep this stop where it is now (or drag ⠿ it somewhere else)'}" aria-label="${s.pos ? `Stop ${s.pos}, placed by you. Tap to let the planner place it` : `Keep ${esc(s.name)} at this place in the route`}">${num}</button>`
           : `<span class="${nCls}">${num}</span>`;
-        return `<li data-k="${esc(s.k)}" class="${tr ? 'has-tr' : ''}${s.pos ? ' mine' : ''}${rt.posFor===s.k ? ' choosing' : ''}">${badge}<span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? (res.busyFrom != null && i >= res.busyFrom ? '<small class="rt-upd"><span class="busy-spin" aria-hidden="true"></span>Updating times…</small>' : trLegHtml(tr, i===0, leg, res.order[i] != null ? i : i)) : `<small>${leg ? (roadMode() ? `${fmtDur(leg.dur)} ${rt.mode==='car' ? 'drive' : 'walk'} · ${fmtDist(leg.dist)}${leg.delay >= 60 ? ` · <span class="rt-late">+${Math.round(leg.delay / 60)} min traffic</span>` : ''}${res.est && !(res.traffic && !res.traffic.failed) ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
+        const grip = rt.stops.length > 1 ? `<span class="rt-grip" title="Drag to move it" aria-hidden="true">⠿</span>` : '';
+        return `<li data-k="${esc(s.k)}" class="${tr ? 'has-tr' : ''}${s.pos ? ' mine' : ''}">${grip}${badge}<span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? (res.busyFrom != null && i >= res.busyFrom ? '<small class="rt-upd"><span class="busy-spin" aria-hidden="true"></span>Updating times…</small>' : trLegHtml(tr, i===0, leg, res.order[i] != null ? i : i)) : `<small>${leg ? (roadMode() ? `${fmtDur(leg.dur)} ${rt.mode==='car' ? 'drive' : 'walk'} · ${fmtDist(leg.dist)}${leg.delay >= 60 ? ` · <span class="rt-late">+${Math.round(leg.delay / 60)} min traffic</span>` : ''}${res.est && !(res.traffic && !res.traffic.failed) ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
           ${i===0 && res && rt.start ? `<button type="button" class="rt-done" data-done="${esc(s.k)}">✓ Done here</button>` : ''}</span>
           ${rt.start && res ? `<a class="rt-dir" href="${esc(gmDir(prevOf(i), s, rt.mode))}" target="_blank" rel="noopener noreferrer" title="${rt.mode==='walk' ? 'Walking' : rt.mode==='car' ? 'Driving' : 'Public transport'} directions in Google Maps" aria-label="Directions to ${esc(s.name)}">${GMAPS_SVG}${roadMode() ? '' : 'Go'}</a>` : ''}
-          <button type="button" class="rt-x" data-rm="${esc(s.k)}" aria-label="Take ${esc(s.name)} off the route" title="Take it off">×</button></li>${posRow(s)}`; }).join('')}</ol>`
+          <button type="button" class="rt-x" data-rm="${esc(s.k)}" aria-label="Take ${esc(s.name)} off the route" title="Take it off">×</button></li>`; }).join('')}</ol>`
       : '<div class="rt-empty">No stops yet. Add the shops you want to visit, and I’ll work out the quickest order.</div>'}
     ${res && rt.stops.length ? (roadMode()
         ? `<div class="rt-sum">≈ <b>${fmtDur(res.total.dur)}</b> ${rt.mode==='car' ? 'driving' : 'walking'} · ${fmtDist(res.total.dist)}${rt.stops.length > 1 ? ', in the quickest order' : ''}.${rt.mode==='car' ? (res.traffic && !res.traffic.failed
@@ -8350,7 +8405,7 @@ function renderRoute(){
         : res.trOk ? `<div class="rt-sum">≈ <b>${fmtDur(Math.max(0, (res.arrive - (res.leave || Date.now())) / 1000))}</b> by public transport${rt.leaveAt ? `, leaving ${esc(fmtWhen(res.leave))}` : ''} · at your last stop around <b>${fmtClock(res.arrive)}</b>.<small>Times for later stops assume you leave as soon as you arrive. When you’re finished at a stop, tap <b>✓ Done here</b> for fresh times from where you are.${res.trOk < res.legs.length ? ' For steps without a connection, tap <b>Go</b> for Google Maps.' : ''}</small><small class="rt-credit">Connections: <a href="https://transitous.org" target="_blank" rel="noopener noreferrer">Transitous</a> · <a href="${TRANSITOUS_SOURCES}" target="_blank" rel="noopener noreferrer">timetable sources</a></small></div>`
         : `<div class="rt-sum">Stops in the shortest order (${fmtDist(res.total.dist)} in all).<small>${HOST ? 'Couldn’t get tram, metro and bus times right now.' : 'Tram, metro and bus times work in the app version (outside Claude).'} Tap <b>Go</b> at each stop for public transport directions in Google Maps.</small></div>`)
       : rt.busy ? '<div class="rt-sum"><span class="busy-spin" aria-hidden="true"></span>Working out the quickest order…</div>'
-      : rt.stops.length && !rt.asked && !rt.startPick ? `<div class="rt-go${rt.results || rt.posFor ? ' static' : ''}"><button type="button" class="pc-btn pc-main" id="rtPlan"${rt.start ? '' : ' disabled'}>🧭 Plan my route${rt.stops.length > 1 ? ` · ${rt.stops.length} stops` : ''}</button><small>${rt.start ? (rt.stops.length > 1 ? (rt.stops.some(x=>x.pos) ? 'Numbered stops keep the number you gave them. I’ll fit the empty circles around them in the quickest order.' : 'Add all your stops first, then press this to get the quickest order. Want a stop at a certain place in the route (1st, 4th…)? Tap its circle.') : 'Add all your stops first, then press this to get the quickest order.') : 'Set where you start (above) first.'}</small></div>`
+      : rt.stops.length && !rt.asked && !rt.startPick ? `<div class="rt-go${rt.results ? ' static' : ''}"><button type="button" class="pc-btn pc-main" id="rtPlan"${rt.start ? '' : ' disabled'}>🧭 Plan my route${rt.stops.length > 1 ? ` · ${rt.stops.length} stops` : ''}</button><small>${rt.start ? (rt.stops.length > 1 ? (rt.stops.some(x=>x.pos) ? 'Numbered stops stay where you put them. I’ll fit the empty circles around them in the quickest order.' : 'Add all your stops first, then press this to get the quickest order. Want a stop at a certain place (1st, 4th…)? Drag it there by its ⠿.') : 'Add all your stops first, then press this to get the quickest order.') : 'Set where you start (above) first.'}</small></div>`
       : rt.stops.length && !rt.start ? '<div class="rt-sum">Set where you start (above), and I’ll work out the order.</div>' : ''}
     ${rt.stops.length ? `<div class="rt-acts">${res && rt.start ? gmRouteButtons(rt.start, ordered, rt.mode) : ''}
       <button type="button" class="pc-btn" id="rtClear">Clear route</button></div>` : ''}`;
@@ -8383,8 +8438,8 @@ function renderRoute(){
   box.querySelectorAll('[data-add]').forEach(b=>b.onclick = ()=>{ const [kind, i] = b.dataset.add.split(':'); const r = (kind==='m' ? R.mine : R.found)[+i]; if(!r) return;
     const st = onRt(r); if(st) removeStop(st.k); else addStop(r); });              // tap again to take it off
   box.querySelectorAll('[data-rm]').forEach(b=>b.onclick = ()=>removeStop(b.dataset.rm));
-  box.querySelectorAll('[data-fix]').forEach(b=>b.onclick = ()=>openPos(b.dataset.fix));
-  box.querySelectorAll('[data-pos]').forEach(b=>b.onclick = ()=>setPos(rt.posFor, +b.dataset.pos));
+  box.querySelectorAll('[data-lock]').forEach(b=>b.onclick = ()=>lockHere(b.dataset.lock));
+  box.querySelectorAll('.rt-stops li[data-k]').forEach(wireDrag);
   box.querySelectorAll('[data-done]').forEach(b=>b.onclick = ()=>doneHere(b.dataset.done));
   box.querySelectorAll('[data-pick]').forEach(b=>b.onclick = e=>{ e.preventDefault(); const [i, d] = b.dataset.pick.split(':').map(Number); pickConnection(i, d); });
   box.querySelectorAll('.rt-stops > li.has-tr').forEach(li=>{
