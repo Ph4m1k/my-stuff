@@ -1795,7 +1795,16 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-nm{display:flex;flex-direction:column;}
   .rt-credit{display:block;margin-top:4px;}
   .rt-credit a{color:inherit;}
-  .rt-stops li.rt-startrow{border-style:dashed;background:none;}
+  .rt-stops li.rt-startrow{border-style:dashed;background:none;cursor:pointer;transition:border-color .15s, background .15s;}
+  .rt-stops li.rt-startrow:hover{border-color:var(--accent);}
+  .rt-chg{flex:0 0 auto;margin-left:auto;font-size:0.74rem;color:var(--muted);}
+  .rt-startrow:hover .rt-chg{color:var(--accent);}
+  .rt-drop-l{display:none;flex:0 0 auto;margin-left:auto;font-size:0.76rem;font-weight:600;color:var(--accent);}
+  .rt-stops li.rt-startrow.drop{border-style:solid;border-color:var(--accent);background:color-mix(in srgb, var(--accent) 22%, var(--paper));box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);}
+  .rt-startrow.drop .rt-chg{display:none;}
+  .rt-startrow.drop .rt-drop-l{display:inline;}
+  .rt-stops li.dragging.to-start{opacity:.25;}
+  .rt-stops li.rt-startrow.drop{z-index:6;}
   .play-ic{width:9px;height:9px;display:block;}
   .pm-emo .play-ic{width:13px;height:13px;}
   .rt-startrow .rt-ic{flex:0 0 auto;font-size:1rem;line-height:1;align-self:center;}
@@ -7655,7 +7664,7 @@ function dragRow(li, e, now){
   const rows = ()=>[...list.querySelectorAll('li[data-k]')];
   const keys0 = rows().map(x=>x.dataset.k).join();
   const grabY = e.clientY - li.getBoundingClientRect().top;
-  let y = (now || e).clientY, run = true;
+  let y = (now || e).clientY, run = true, overStart = false, overSince = 0;
   rt.drag = {k};
   try{ getSelection().removeAllRanges(); }catch(_){}
   li.classList.add('dragging'); document.body.classList.add('rt-dragging');
@@ -7670,8 +7679,14 @@ function dragRow(li, e, now){
       if(prev && want < prev.offsetTop + prev.offsetHeight / 2){ flip(prev, ()=>list.insertBefore(li, prev)); moved = true; continue; }
       if(next && want + li.offsetHeight > next.offsetTop + next.offsetHeight / 2){ flip(next, ()=>list.insertBefore(li, next.nextSibling)); moved = true; }
     }
-    const all = rows(), lo = all[0].offsetTop, hi = all[all.length - 1].offsetTop;
-    li.style.transform = `translateY(${Math.max(lo - 8, Math.min(hi + 8, want)) - li.offsetTop}px)`;
+    const all = rows(), sr = list.querySelector('.rt-startrow'), hi = all[all.length - 1].offsetTop;
+    const lo = sr ? sr.offsetTop : all[0].offsetTop - 8;
+    const finger = y - list.getBoundingClientRect().top;
+    const onStart = !!(sr && all[0]===li && finger < sr.offsetTop + sr.offsetHeight - 4);   // your finger/pointer is on the start…
+    if(!onStart) overSince = 0; else if(!overSince) overSince = performance.now();
+    overStart = onStart && performance.now() - overSince > 320;                            // …and stays there a moment: let go to start there
+    if(sr) sr.classList.toggle('drop', overStart); li.classList.toggle('to-start', overStart);
+    li.style.transform = `translateY(${Math.max(lo, Math.min(hi + 8, want)) - li.offsetTop}px)`;
   };
   const tick = ()=>{
     if(!run) return;
@@ -7686,6 +7701,7 @@ function dragRow(li, e, now){
     run = false;
     window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end);
     document.body.classList.remove('rt-dragging');
+    if(overStart){ rt.drag = null; startAtStop(k, 'drag'); return; }
     const keys = rows().map(x=>x.dataset.k);
     if(keys.join()===keys0){                                     // dropped where it was: just settle back
       const t = li.style.transform; li.style.transform = ''; li.classList.remove('dragging'); rt.drag = null;
@@ -8404,7 +8420,7 @@ function renderRoute(){
     ${R ? `<div class="rt-res">${R.mine.length ? `<div class="rt-sec">Your places</div>${R.mine.map((r, i)=>resRow(r, 'm', i)).join('')}` : ''}
       ${R.found ? (R.found.length ? `<div class="rt-sec">${rt.resFar ? 'Nothing near here · further away' : 'On the map'}${R.found.length > 1 ? ` · ${R.found.length}` : ''}</div>${R.found.slice(0, rt.resAll ? 60 : 8).map((r, i)=>resRow(r, 'f', i)).join('')}${R.found.length > 8 && !rt.resAll ? `<button type="button" class="rt-more" id="rtResAll">Show all ${R.found.length} · they’re also pins on the map</button>` : ''}${rt.searching ? '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Looking for more…</div>' : ''}` : (R.mine.length ? '' : '<div class="rt-empty">Nothing found. Try another name, or tap the place on the map.</div>')) : '<div class="rt-empty"><span class="busy-spin" aria-hidden="true"></span>Searching…</div>'}</div>` : ''}
     <div class="rt-hint">Or tap any of your pins, or any shop on the map, to add it. Tap one of your route’s green pins to take it off.</div>
-    ${rt.stops.length ? `<ol class="rt-stops">${rt.start ? `<li class="rt-startrow"><span class="rt-n"><svg class="play-ic" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.4 L9 5 L3 8.6Z" fill="currentColor"/></svg></span>${rt.startSrc==='gps' ? '<span class="rt-ic" aria-hidden="true">📍</span>' : ''}<span class="rt-nm"><b>${rt.startSrc==='gps' ? 'Where you are now' : esc(rt.startName || 'The spot you chose on the map')}</b><small>Start</small></span></li>` : ''}${ordered.map((s, i)=>{ const leg = res && res.legs[i];
+    ${rt.stops.length ? `<ol class="rt-stops">${rt.start ? `<li class="rt-startrow" id="rtStartRow" role="button" tabindex="0" title="Change where you start (or drag a stop here)"><span class="rt-n"><svg class="play-ic" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.4 L9 5 L3 8.6Z" fill="currentColor"/></svg></span>${rt.startSrc==='gps' ? '<span class="rt-ic" aria-hidden="true">📍</span>' : ''}<span class="rt-nm"><b>${rt.startSrc==='gps' ? 'Where you are now' : esc(rt.startName || 'The spot you chose on the map')}</b><small>Start</small></span><span class="rt-chg">${rt.startPick ? 'Close ▴' : 'Change ▾'}</span><span class="rt-drop-l">Drop here to start here</span></li>` : ''}${ordered.map((s, i)=>{ const leg = res && res.legs[i];
         const tr = leg && rt.mode==='transit' && leg.tr;
         const num = res || s.pos ? i + 1 : '';
         // the circle: tap it to say "this one next, in my order" (it gets its number); tap again to let the planner choose
@@ -8433,11 +8449,17 @@ function renderRoute(){
   box.querySelector('#rtMin').onclick = ()=>{ rt.mini = !rt.mini; renderRoute(); };
   const pb = box.querySelector('#rtPlan'); if(pb) pb.onclick = ()=>{ if(!rt.start || !rt.stops.length) return; rt.asked = true; rt.busy = true; renderRoute(); planSoon(true); };
   box.querySelectorAll('.rt-modes [data-m]').forEach(b=>b.onclick = ()=>{ if(rt.mode===b.dataset.m) return; rt.mode = b.dataset.m; rt.res = null; saveRt(); replanIfAsked(); });
-  box.querySelector('#rtLocate').onclick = ()=>{ rt.setStart = false; locateMe(); };
+  box.querySelector('#rtLocate').onclick = ()=>{ rt.setStart = false; rt.startPick = false; rt.startQ = ''; rt.startRes = null; rt.startMsg = ''; locateMe(); renderRoute(); };
   box.querySelector('#rtPickStart').onclick = ()=>{ rt.setStart = !rt.setStart; rt.startPick = false; if(rt.setStart && !isWide()) rt.mini = true; renderRoute(); };
   box.querySelector('#rtPickPlace').onclick = ()=>{ rt.startPick = !rt.startPick; if(rt.startPick) rt.mini = false; rt.setStart = false; rt.startQ = ''; rt.startRes = null; rt.startMsg = ''; renderRoute(); if(rt.startPick && isWide()) setTimeout(()=>{ const i = document.getElementById('rtStartQ'); if(i) i.focus(); }, 30); };
   box.querySelectorAll('[data-start]').forEach(b=>b.onclick = ()=>startAtPlace(places.find(x=>x.id===b.dataset.start)));
   box.querySelectorAll('[data-starts]').forEach(b=>b.onclick = ()=>startAtStop(b.dataset.starts));
+  const sRow = box.querySelector('#rtStartRow');
+  if(sRow){
+    const openFind = ()=>{ const b = box.querySelector('#rtPickPlace'); if(b) b.click(); const f = document.getElementById('rtStartF'); if(f && rt.startPick) f.scrollIntoView({block: 'nearest', behavior: 'smooth'}); };
+    sRow.onclick = openFind;
+    sRow.onkeydown = e=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); openFind(); } };
+  }
   box.querySelectorAll('[data-startf]').forEach(b=>b.onclick = ()=>startAtSpot((rt.startRes || [])[+b.dataset.startf]));
   const sq = box.querySelector('#rtStartQ');
   if(sq){
