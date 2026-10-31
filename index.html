@@ -1801,13 +1801,23 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .rt-startrow .rt-ic{flex:0 0 auto;font-size:1rem;line-height:1;align-self:center;}
   .rt-startrow .rt-n{font-size:0.62rem;padding-left:1px;}
   .rt-n.none{background:none;border:2px dashed var(--accent);opacity:.75;}
+  .rt-stops li.rt-pos{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--accent);border-top:none;border-radius:0 0 6px 6px;background:color-mix(in srgb, var(--accent) 10%, var(--paper));font-size:0.8rem;margin-top:-6px;}
+  .rt-stops li.choosing{border-color:var(--accent);border-radius:6px 6px 0 0;}
+  .rt-pos-l{color:var(--muted);}
+  .rt-pos-ns{display:flex;flex-wrap:wrap;gap:4px;}
+  .rt-pos-ns button{width:28px;height:28px;border-radius:50%;border:2px solid var(--accent);background:none;color:var(--ink);font:inherit;font-weight:700;cursor:pointer;}
+  .rt-pos-ns button.taken{border-style:dashed;opacity:.6;}
+  .rt-pos-ns button:hover{background:color-mix(in srgb, var(--accent) 25%, transparent);opacity:1;}
+  .rt-pos-ns button.on{background:var(--accent);color:var(--paper);opacity:1;border-style:solid;}
+  .rt-pos-q{margin-left:auto;border:1px solid var(--line);background:none;color:var(--ink);font:inherit;padding:4px 9px;border-radius:14px;cursor:pointer;}
+  .rt-pos-q.on{border-color:var(--accent);color:var(--accent);}
   .rt-n.calc{background:none;border:2px solid var(--accent);color:var(--accent);}    /* worked out by the planner */
   .rt-nb{padding:0;border:none;cursor:pointer;font-family:inherit;transition:transform .12s, opacity .12s;}
   .rt-nb.none,.rt-nb.calc{border:2px dashed var(--accent);}
   .rt-nb.calc{border-style:solid;}
   .rt-nb:hover{transform:scale(1.12);opacity:1;}
   .rt-nb:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-  .rt-stops li.fixed{border-color:color-mix(in srgb, var(--accent) 55%, var(--line));}
+  .rt-stops li.mine{border-color:color-mix(in srgb, var(--accent) 55%, var(--line));}
   .pm-nodot{display:block;width:8px;height:8px;border-radius:50%;background:currentColor;}
   .rt-x{flex:0 0 auto;border:none;background:none;color:var(--muted);font-size:1.1rem;cursor:pointer;padding:0 4px;}
   .rt-sum{padding:8px 10px;border-radius:6px;background:color-mix(in srgb, var(--accent) 10%, transparent);font-size:0.84rem;}
@@ -2837,7 +2847,7 @@ const RT_KEY = 'route-plan';
 const rt = {on:false, stops:[], mode:'walk', start:null, startSrc:'', locating:false, locErr:'', setStart:false,
             res:null, busy:false, err:'', q:'', results:null, searching:false, mini:false};
 try{ const sv = JSON.parse(localStorage.getItem(RT_KEY) || 'null');
-  if(sv){ rt.stops = (sv.stops || []).filter(x=>x && validLatLng(x.lat, x.lng)).slice(0, 12); rt.mode = sv.mode==='transit' || sv.mode==='car' ? sv.mode : 'walk'; rt.stops = rt.stops.filter(x=>x.fixed).concat(rt.stops.filter(x=>!x.fixed)); } }catch(e){}
+  if(sv){ rt.stops = (sv.stops || []).filter(x=>x && validLatLng(x.lat, x.lng)).slice(0, 12); rt.mode = sv.mode==='transit' || sv.mode==='car' ? sv.mode : 'walk'; tidyStops(); } }catch(e){}
 
 
 // ---------- Browsing: search, sort, filters (kept per module, per browser) ----------
@@ -7537,8 +7547,22 @@ async function removeInbox(it){
 // ================= Route planner: the quickest way past several shops =================
 // Start where you are, visit every stop, finish at the last one. Walking times come from a free OpenStreetMap
 // route service; for public transport the stops are put in order by distance and each step opens Google Maps.
-// stops you pinned (📌) stay at the front of the list, in the order you pinned them; the rest follow
-function tidyStops(){ const f = rt.stops.filter(x=>x.fixed), r = rt.stops.filter(x=>!x.fixed); rt.stops = f.concat(r); }
+// a stop can have a number you chose (s.pos: "go here as stop 4"); the list is kept in that order, with the
+// stops the planner may place filling the gaps in between (in the order you added them)
+function tidyStops(){
+  rt.stops.forEach((s, i)=>{ if(s.fixed && !s.pos) s.pos = i + 1; delete s.fixed; });     // (the earlier "pinned to the front" stops)
+  const N = rt.stops.length, slot = new Array(N).fill(null);
+  rt.stops.filter(s=>s.pos).sort((a, b)=>a.pos - b.pos).forEach(s=>{
+    let p = Math.min(Math.max(1, Math.round(s.pos) || 1), N);
+    while(p > 1 && slot[p - 1]) p--;                        // too high (a stop was taken off) or already taken: the nearest free number below
+    if(slot[p - 1]){ p = 1; while(p <= N && slot[p - 1]) p++; }
+    if(p > N){ delete s.pos; return; }
+    s.pos = p; slot[p - 1] = s;
+  });
+  const free = rt.stops.filter(s=>!s.pos || slot[s.pos - 1] !== s); let f = 0;
+  for(let i = 0; i < N; i++) if(!slot[i]) slot[i] = free[f++];
+  rt.stops = slot.filter(Boolean);
+}
 function saveRt(){ tidyStops(); try{ localStorage.setItem(RT_KEY, JSON.stringify({stops: rt.stops, mode: rt.mode})); }catch(e){} updateNavCounts(); }
 function setRtOpen(on){ rtOpen = !!on; try{ localStorage.setItem(RT_OPEN_KEY, rtOpen ? '1' : '0'); }catch(e){} }
 function toggleRoute(force){
@@ -7595,18 +7619,39 @@ function addStop(st){
   saveRt(); stopsChanged();                                   // the search stays open: pick as many of the results as you like
   toast(rt.on ? `Added “${st.name || 'stop'}” to your route.` : `Added “${st.name || 'stop'}” to your route (${rt.stops.length} ${rt.stops.length===1 ? 'stop' : 'stops'}). Tap 🧭 Route to plan it.`);
 }
-// 📌 "go here first": pinned stops are visited first, in the order you pin them; the rest get the quickest order after them
-function toggleFixed(k){
-  const i = rt.stops.findIndex(x=>x.k===k); if(i < 0) return;
-  const [s] = rt.stops.splice(i, 1), nf = rt.stops.filter(x=>x.fixed).length;
-  s.fixed = !s.fixed;
-  rt.stops.splice(nf, 0, s);                                  // pinning: joins the end of the pinned ones; unpinning: first of the rest
+// tap a stop's circle: choose which number it is in the route (1, 2, 3…), or "Quickest" to let the planner place it
+function posRow(s){
+  if(rt.posFor !== s.k) return '';
+  const N = rt.stops.length;
+  const nums = Array.from({length: N}, (_, i)=>i + 1).map(n=>{ const other = rt.stops.find(x=>x!==s && x.pos===n);
+    return `<button type="button" data-pos="${n}" class="${s.pos===n ? 'on' : ''}${other ? ' taken' : ''}" aria-pressed="${s.pos===n}" title="${other ? `Stop ${n} is now “${esc(other.name)}”${s.pos ? '; they’ll swap' : ''}` : `Make it stop ${n}`}">${n}</button>`; }).join('');
+  return `<li class="rt-pos" role="group" aria-label="Which stop number is ${esc(s.name)}?"><span class="rt-pos-l">Go here as stop</span><span class="rt-pos-ns">${nums}</span><button type="button" class="rt-pos-q${s.pos ? '' : ' on'}" data-pos="0" title="Let the planner put it where it’s quickest">⚡ Quickest</button></li>`;
+}
+function openPos(k){
+  rt.posFor = rt.posFor===k ? null : k; renderPlaces();
+  const row = rt.posFor && document.querySelector('#rtPanel .rt-pos');
+  if(row && row.scrollIntoView) row.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+}
+function setPos(k, n){
+  const s = rt.stops.find(x=>x.k===k); if(!s) return;
+  if(n){
+    const other = rt.stops.find(x=>x!==s && x.pos===n);
+    if(other){ if(s.pos) other.pos = s.pos; else delete other.pos; }   // that number was taken: swap (or the other one goes back to "quickest")
+    s.pos = n;
+  }else delete s.pos;
+  rt.posFor = null;
   saveRt();
   const was = rowRects();
   if(rt.asked){ rt.res = null; planSoon(true); }
   drawRoute(); renderPlaces();
   slideRows(was, k);
 }
+document.addEventListener('pointerdown', e=>{                // tap anywhere else: close the number chooser
+  if(!rt.posFor || !e.target.closest) return;
+  if(e.target.closest('.rt-pos, .rt-nb')) return;
+  rt.posFor = null; renderPlaces();
+});
+document.addEventListener('keydown', e=>{ if(e.key==='Escape' && rt.posFor){ rt.posFor = null; renderPlaces(); } });
 // where each stop row is on screen, so a moved row can glide to its new place instead of jumping
 function rowRects(){ const m = {}; document.querySelectorAll('#rtPanel .rt-stops li[data-k]').forEach(li=>{ m[li.dataset.k] = li.getBoundingClientRect().top; }); return m; }
 function slideRows(was, moved){
@@ -7631,8 +7676,10 @@ function removeStop(k){
 // finished at the next stop: tick it off and work out the way on from where you are now
 function doneHere(k){
   const i = rt.stops.findIndex(x=>x.k===k); if(i < 0) return;
-  const before = {stops: rt.stops.slice(), start: rt.start, startSrc: rt.startSrc, startName: rt.startName};
-  const [gone] = rt.stops.splice(i, 1); saveRt();
+  const before = {stops: rt.stops.map(x=>({...x})), start: rt.start, startSrc: rt.startSrc, startName: rt.startName};
+  const [gone] = rt.stops.splice(i, 1);
+  rt.stops.forEach(x=>{ if(x.pos){ x.pos--; if(x.pos < 1) delete x.pos; } });   // one stop done: your 4th stop is now the 3rd
+  rt.posFor = null; saveRt();
   rt.start = {lat: gone.lat, lng: gone.lng}; rt.startSrc = 'stop'; rt.startName = gone.name;   // until the phone says where you are
   rt.leaveAt = null;                                        // you're on your way: times from now on
   rt.res = null; planSeq++; clearTimeout(planTimer);
@@ -7667,7 +7714,7 @@ function routePinTapped(id){
 function stopNumber(k){
   if(rt.res && rt.res.key===routeKey()){ const i = rt.res.order.findIndex(j=>rt.stops[j - 1] && rt.stops[j - 1].k===k); if(i >= 0) return i + 1; }
   const s = rt.stops.find(x=>x.k===k);
-  return s && s.fixed ? rt.stops.findIndex(x=>x.k===k) + 1 : '';   // not planned yet: only the pinned ones have a known place in the order
+  return s && s.pos ? s.pos : '';   // not planned yet: only the ones you numbered have a known place in the order
 }
 // the little card above a pin when you point at it (computer): name, address, and what a click does
 function pinTip(name, addr, what){
@@ -7896,15 +7943,9 @@ function straightMatrix(pts){
   return {dist, dur: dist.map(r=>r.map(d=>d / ((rt.mode==='car' ? CAR_KMH : WALK_KMH) / 3.6)))};
 }
 // the best order: try every order for up to 8 stops; for more, start with the nearest each time and keep improving
-// nf: the first nf stops are pinned, so they go first in that order and only the rest are sorted (starting from the last pinned one)
-function bestOrder(c, nf){
-  nf = Math.min(nf || 0, c.length - 1);
-  if(nf > 0){
-    const pre = Array.from({length: nf}, (_, i)=>i + 1), rest = Array.from({length: c.length - 1 - nf}, (_, i)=>i + 1 + nf);
-    if(!rest.length) return pre;
-    const ids = [nf, ...rest], sub = ids.map(a=>ids.map(b=>c[a][b]));
-    return pre.concat(bestOrder(sub, 0).map(j=>ids[j]));
-  }
+// fx: for each place in the route (1st, 2nd…), the stop you chose for it, or 0 = the planner picks the quickest one
+function bestOrder(c, fx){
+  if(fx && fx.some(Boolean)) return bestOrderFixed(c, fx);
   const n = c.length - 1; if(n <= 0) return [];
   const idx = Array.from({length: n}, (_, i)=>i + 1);
   const len = o=>o.reduce((s, j, i)=>s + c[i ? o[i - 1] : 0][j], 0);
@@ -7930,6 +7971,37 @@ function bestOrder(c, nf){
   }
   return o;
 }
+function bestOrderFixed(c, fx){
+  const n = c.length - 1, taken = new Set(fx.filter(Boolean)), free = [];
+  for(let j = 1; j <= n; j++) if(!taken.has(j)) free.push(j);
+  const len = o=>o.reduce((s, j, i)=>s + c[i ? o[i - 1] : 0][j], 0);
+  if(free.length <= 8){                                       // few enough: try every way of filling the gaps
+    let best = null, bl = Infinity; const path = [];
+    const go = (slot, from, left, sofar)=>{
+      if(sofar >= bl) return;
+      if(slot===n){ bl = sofar; best = path.slice(); return; }
+      if(fx[slot]){ path.push(fx[slot]); go(slot + 1, fx[slot], left, sofar + c[from][fx[slot]]); path.pop(); return; }
+      for(let i = 0; i < left.length; i++){ const j = left[i]; path.push(j); go(slot + 1, j, left.slice(0, i).concat(left.slice(i + 1)), sofar + c[from][j]); path.pop(); }
+    };
+    go(0, 0, free, 0);
+    return best;
+  }
+  const o = [], left = new Set(free); let at = 0;              // many: nearest next each time, then keep swapping two gaps while it gets shorter
+  for(let slot = 0; slot < n; slot++){
+    let nx = fx[slot];
+    if(!nx){ let nd = Infinity; left.forEach(j=>{ if(c[at][j] < nd){ nd = c[at][j]; nx = j; } }); left.delete(nx); }
+    o.push(nx); at = nx;
+  }
+  const gaps = fx.map((f, i)=>f ? -1 : i).filter(i=>i >= 0);
+  for(let better = true; better;){
+    better = false;
+    for(let a = 0; a < gaps.length - 1; a++) for(let b = a + 1; b < gaps.length; b++){
+      const t = o.slice(); [t[gaps[a]], t[gaps[b]]] = [t[gaps[b]], t[gaps[a]]];
+      if(len(t) + 1e-6 < len(o)){ o.splice(0, o.length, ...t); better = true; }
+    }
+  }
+  return o;
+}
 let planTimer = null, planSeq = 0;
 // the order is worked out only when you press "Plan my route", so you can add all your stops first.
 // Adding or removing a stop clears the old answer; changing the start or walking/transport re-plans one you already asked for.
@@ -7946,7 +8018,7 @@ async function planRoute(){
   try{ M = await walkMatrix(pts); }catch(e){ M = null; }
   if(seq !== planSeq || !rt.on) return;
   if(!M){ M = straightMatrix(pts); est = true; }
-  const order = bestOrder(roadMode() ? M.dur : M.dist, rt.stops.filter(x=>x.fixed).length);
+  const order = bestOrder(roadMode() ? M.dur : M.dist, rt.stops.map((x, i)=>x.pos ? i + 1 : 0));
   const legs = order.map((j, i)=>{ const a = i ? order[i - 1] : 0; return {from: a, to: j, dur: M.dur[a][j], dist: M.dist[a][j]}; });
   let geom = null;
   if(roadMode() && !est){
@@ -7997,7 +8069,7 @@ async function planRoute(){
   rt.busy = false;
   drawRoute(); renderPlaces(); fitRoute();
 }
-const routeKey = ()=>JSON.stringify([rt.mode, rt.start && [rt.start.lat.toFixed(5), rt.start.lng.toFixed(5)], rt.stops.map(s=>s.k + (s.fixed ? '!' : '')), rt.mode==='transit' ? rt.leaveAt || 0 : 0]);
+const routeKey = ()=>JSON.stringify([rt.mode, rt.start && [rt.start.lat.toFixed(5), rt.start.lng.toFixed(5)], rt.stops.map(s=>s.k + (s.pos ? '@' + s.pos : '')), rt.mode==='transit' ? rt.leaveAt || 0 : 0]);
 function drawRoute(){
   if(!plMap || !plMap.setRoute) return;
   if(!rt.on || !rt.res || !rt.start || rt.res.key !== routeKey()){ plMap.setRoute(null); return; }
@@ -8260,16 +8332,16 @@ function renderRoute(){
     <div class="rt-hint">Or tap any of your pins, or any shop on the map, to add it. Tap one of your route’s green pins to take it off.</div>
     ${rt.stops.length ? `<ol class="rt-stops">${rt.start ? `<li class="rt-startrow"><span class="rt-n"><svg class="play-ic" viewBox="0 0 10 10" aria-hidden="true"><path d="M3 1.4 L9 5 L3 8.6Z" fill="currentColor"/></svg></span>${rt.startSrc==='gps' ? '<span class="rt-ic" aria-hidden="true">📍</span>' : ''}<span class="rt-nm"><b>${rt.startSrc==='gps' ? 'Where you are now' : esc(rt.startName || 'The spot you chose on the map')}</b><small>Start</small></span></li>` : ''}${ordered.map((s, i)=>{ const leg = res && res.legs[i];
         const tr = leg && rt.mode==='transit' && leg.tr;
-        const num = res || s.fixed ? i + 1 : '';
+        const num = res || s.pos ? i + 1 : '';
         // the circle: tap it to say "this one next, in my order" (it gets its number); tap again to let the planner choose
-        const nCls = `rt-n${s.fixed ? ' mine' : num ? ' calc' : ' none'}`;
+        const nCls = `rt-n${s.pos ? ' mine' : num ? ' calc' : ' none'}`;
         const badge = rt.stops.length > 1
-          ? `<button type="button" class="${nCls} rt-nb" data-fix="${esc(s.k)}" aria-pressed="${!!s.fixed}" title="${s.fixed ? `You chose this as stop ${i + 1}. Tap to let the planner decide` : 'Tap to make this your next stop in your own order'}" aria-label="${s.fixed ? `Stop ${i + 1}, chosen by you. Tap to undo` : `Choose ${esc(s.name)} as the next stop in your order`}">${num}</button>`
+          ? `<button type="button" class="${nCls} rt-nb" data-fix="${esc(s.k)}" aria-expanded="${rt.posFor===s.k}" title="${s.pos ? `You chose this as stop ${s.pos}. Tap to change` : 'Tap to choose which stop number this is'}" aria-label="${s.pos ? `Stop ${s.pos}, chosen by you. Tap to change` : `Choose the stop number for ${esc(s.name)}`}">${num}</button>`
           : `<span class="${nCls}">${num}</span>`;
-        return `<li data-k="${esc(s.k)}" class="${tr ? 'has-tr' : ''}${s.fixed ? ' fixed' : ''}">${badge}<span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? (res.busyFrom != null && i >= res.busyFrom ? '<small class="rt-upd"><span class="busy-spin" aria-hidden="true"></span>Updating times…</small>' : trLegHtml(tr, i===0, leg, res.order[i] != null ? i : i)) : `<small>${leg ? (roadMode() ? `${fmtDur(leg.dur)} ${rt.mode==='car' ? 'drive' : 'walk'} · ${fmtDist(leg.dist)}${leg.delay >= 60 ? ` · <span class="rt-late">+${Math.round(leg.delay / 60)} min traffic</span>` : ''}${res.est && !(res.traffic && !res.traffic.failed) ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
+        return `<li data-k="${esc(s.k)}" class="${tr ? 'has-tr' : ''}${s.pos ? ' mine' : ''}${rt.posFor===s.k ? ' choosing' : ''}">${badge}<span class="rt-nm"><b>${esc(s.emoji || '')} ${esc(s.name)}</b>${tr ? (res.busyFrom != null && i >= res.busyFrom ? '<small class="rt-upd"><span class="busy-spin" aria-hidden="true"></span>Updating times…</small>' : trLegHtml(tr, i===0, leg, res.order[i] != null ? i : i)) : `<small>${leg ? (roadMode() ? `${fmtDur(leg.dur)} ${rt.mode==='car' ? 'drive' : 'walk'} · ${fmtDist(leg.dist)}${leg.delay >= 60 ? ` · <span class="rt-late">+${Math.round(leg.delay / 60)} min traffic</span>` : ''}${res.est && !(res.traffic && !res.traffic.failed) ? ' (estimate)' : ''}` : `${fmtDist(leg.dist)} away${res.trOk ? ' · no connection found' : ''}`) : rt.busy ? 'working out the order…' : ''}</small>`}
           ${i===0 && res && rt.start ? `<button type="button" class="rt-done" data-done="${esc(s.k)}">✓ Done here</button>` : ''}</span>
           ${rt.start && res ? `<a class="rt-dir" href="${esc(gmDir(prevOf(i), s, rt.mode))}" target="_blank" rel="noopener noreferrer" title="${rt.mode==='walk' ? 'Walking' : rt.mode==='car' ? 'Driving' : 'Public transport'} directions in Google Maps" aria-label="Directions to ${esc(s.name)}">${GMAPS_SVG}${roadMode() ? '' : 'Go'}</a>` : ''}
-          <button type="button" class="rt-x" data-rm="${esc(s.k)}" aria-label="Take ${esc(s.name)} off the route" title="Take it off">×</button></li>`; }).join('')}</ol>`
+          <button type="button" class="rt-x" data-rm="${esc(s.k)}" aria-label="Take ${esc(s.name)} off the route" title="Take it off">×</button></li>${posRow(s)}`; }).join('')}</ol>`
       : '<div class="rt-empty">No stops yet. Add the shops you want to visit, and I’ll work out the quickest order.</div>'}
     ${res && rt.stops.length ? (roadMode()
         ? `<div class="rt-sum">≈ <b>${fmtDur(res.total.dur)}</b> ${rt.mode==='car' ? 'driving' : 'walking'} · ${fmtDist(res.total.dist)}${rt.stops.length > 1 ? ', in the quickest order' : ''}.${rt.mode==='car' ? (res.traffic && !res.traffic.failed
@@ -8278,7 +8350,7 @@ function renderRoute(){
         : res.trOk ? `<div class="rt-sum">≈ <b>${fmtDur(Math.max(0, (res.arrive - (res.leave || Date.now())) / 1000))}</b> by public transport${rt.leaveAt ? `, leaving ${esc(fmtWhen(res.leave))}` : ''} · at your last stop around <b>${fmtClock(res.arrive)}</b>.<small>Times for later stops assume you leave as soon as you arrive. When you’re finished at a stop, tap <b>✓ Done here</b> for fresh times from where you are.${res.trOk < res.legs.length ? ' For steps without a connection, tap <b>Go</b> for Google Maps.' : ''}</small><small class="rt-credit">Connections: <a href="https://transitous.org" target="_blank" rel="noopener noreferrer">Transitous</a> · <a href="${TRANSITOUS_SOURCES}" target="_blank" rel="noopener noreferrer">timetable sources</a></small></div>`
         : `<div class="rt-sum">Stops in the shortest order (${fmtDist(res.total.dist)} in all).<small>${HOST ? 'Couldn’t get tram, metro and bus times right now.' : 'Tram, metro and bus times work in the app version (outside Claude).'} Tap <b>Go</b> at each stop for public transport directions in Google Maps.</small></div>`)
       : rt.busy ? '<div class="rt-sum"><span class="busy-spin" aria-hidden="true"></span>Working out the quickest order…</div>'
-      : rt.stops.length && !rt.asked && !rt.startPick ? `<div class="rt-go${rt.results ? ' static' : ''}"><button type="button" class="pc-btn pc-main" id="rtPlan"${rt.start ? '' : ' disabled'}>🧭 Plan my route${rt.stops.length > 1 ? ` · ${rt.stops.length} stops` : ''}</button><small>${rt.start ? (rt.stops.length > 1 ? (rt.stops.some(x=>x.fixed) ? 'Numbered stops go first, in your order. I’ll put the empty circles in the quickest order after them.' : 'Add all your stops first, then press this to get the quickest order. Want some stops in your own order? Tap their circles: 1, 2, 3…') : 'Add all your stops first, then press this to get the quickest order.') : 'Set where you start (above) first.'}</small></div>`
+      : rt.stops.length && !rt.asked && !rt.startPick ? `<div class="rt-go${rt.results || rt.posFor ? ' static' : ''}"><button type="button" class="pc-btn pc-main" id="rtPlan"${rt.start ? '' : ' disabled'}>🧭 Plan my route${rt.stops.length > 1 ? ` · ${rt.stops.length} stops` : ''}</button><small>${rt.start ? (rt.stops.length > 1 ? (rt.stops.some(x=>x.pos) ? 'Numbered stops keep the number you gave them. I’ll fit the empty circles around them in the quickest order.' : 'Add all your stops first, then press this to get the quickest order. Want a stop at a certain place in the route (1st, 4th…)? Tap its circle.') : 'Add all your stops first, then press this to get the quickest order.') : 'Set where you start (above) first.'}</small></div>`
       : rt.stops.length && !rt.start ? '<div class="rt-sum">Set where you start (above), and I’ll work out the order.</div>' : ''}
     ${rt.stops.length ? `<div class="rt-acts">${res && rt.start ? gmRouteButtons(rt.start, ordered, rt.mode) : ''}
       <button type="button" class="pc-btn" id="rtClear">Clear route</button></div>` : ''}`;
@@ -8311,7 +8383,8 @@ function renderRoute(){
   box.querySelectorAll('[data-add]').forEach(b=>b.onclick = ()=>{ const [kind, i] = b.dataset.add.split(':'); const r = (kind==='m' ? R.mine : R.found)[+i]; if(!r) return;
     const st = onRt(r); if(st) removeStop(st.k); else addStop(r); });              // tap again to take it off
   box.querySelectorAll('[data-rm]').forEach(b=>b.onclick = ()=>removeStop(b.dataset.rm));
-  box.querySelectorAll('[data-fix]').forEach(b=>b.onclick = ()=>toggleFixed(b.dataset.fix));
+  box.querySelectorAll('[data-fix]').forEach(b=>b.onclick = ()=>openPos(b.dataset.fix));
+  box.querySelectorAll('[data-pos]').forEach(b=>b.onclick = ()=>setPos(rt.posFor, +b.dataset.pos));
   box.querySelectorAll('[data-done]').forEach(b=>b.onclick = ()=>doneHere(b.dataset.done));
   box.querySelectorAll('[data-pick]').forEach(b=>b.onclick = e=>{ e.preventDefault(); const [i, d] = b.dataset.pick.split(':').map(Number); pickConnection(i, d); });
   box.querySelectorAll('.rt-stops > li.has-tr').forEach(li=>{
