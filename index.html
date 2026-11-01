@@ -1292,6 +1292,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .bought-tag{position:absolute;top:7px;right:7px;padding:2px 8px;border-radius:999px;background:var(--accent);color:var(--card);
     font-family:-apple-system,sans-serif;font-size:0.68rem;font-weight:600;}
   .card.is-bought .thumb img,.card.is-bought .thumb{filter:saturate(.35);}
+  .sort-tag{position:absolute;top:7px;left:7px;padding:2px 8px;border-radius:999px;background:#2f6fdb;color:#fff;font-family:-apple-system,sans-serif;font-size:0.68rem;font-weight:600;}
   .card.is-bought .name{color:var(--muted);}
   .prio{display:inline-block;margin-top:4px;padding:1px 8px;border-radius:999px;font-family:-apple-system,sans-serif;font-size:0.68rem;font-weight:600;}
   .prio-must{background:color-mix(in srgb, #c0392b 16%, transparent);color:#b03a2e;}
@@ -2719,6 +2720,7 @@ async function init(){
     wishes = snap.docs.map(d=>({id:d.id, ...d.data()}));
     wishesLoaded = true;
     scheduleRender();
+    takeShare();
   }, err=>{ wishesLoaded = true; scheduleRender(); });
   db.collection('items').orderBy('createdAt','desc').onSnapshot(snap=>{
     items = snap.docs.map(d=>({id:d.id, ...d.data()}));
@@ -2792,8 +2794,9 @@ const MODULES = {
       catFacet,
       {key:'prio', title:'Priority', chip:'Priority', known:()=>Object.keys(PRIO), none:'Not set', empty:'No priorities yet',
         label: v=>PRIO[v] ? PRIO[v].label : v, values: it=>[PRIO[it.priority] ? it.priority : NONE]},
-      {key:'status', title:'Status', chip:'Status', known:()=>['wanted','bought'], none:null,
-        label: v=>v==='bought' ? 'Bought' : 'Still wanted', values: it=>[it.bought ? 'bought' : 'wanted'], empty:'Nothing here yet'},
+      {key:'status', title:'Status', chip:'Status', known:()=>['tosort','wanted','bought'], none:null,
+        label: v=>v==='bought' ? 'Bought' : v==='tosort' ? '📥 To sort (shared from phone)' : 'Still wanted',
+        values: it=>it.bought ? ['bought'] : it.toSort ? ['tosort', 'wanted'] : ['wanted'], empty:'Nothing here yet'},
     ],
     priceTitle: 'Price (in Kč, roughly)', priceOf: w=>wishKc(w),
     sorts: [['new','Newest first'],['old','Oldest first'],['prio','Priority: high to low'],['az','Name A–Z'],['za','Name Z–A'],['pdesc','Price: high to low'],['pasc','Price: low to high']],
@@ -2845,6 +2848,20 @@ let currentMod = 'inventory';
 const RT_OPEN_KEY = 'route-open';
 let rtOpen = false;
 try{ rtOpen = localStorage.getItem(RT_OPEN_KEY)==='1'; }catch(e){}
+// shared from your phone (Share → My stuff): keep it until you're signed in and your wishlist has loaded
+const SHARE_LS = 'pending-share';
+(function catchShare(){
+  try{
+    const q = new URLSearchParams(location.search);
+    const got = ['share', 'url', 'text', 'title'].map(k=>q.get(k) || '');
+    if(!got.some(Boolean)) return;
+    const all = got.join(' '), url = ((/https?:\/\/[^\s"'<>]+/.exec(all) || [])[0] || '').replace(/[),.;!?]+$/, '');
+    const text = [q.get('text'), q.get('share')].filter(Boolean).join(' ').replace(url, '').replace(/\s+/g, ' ').trim();
+    localStorage.setItem(SHARE_LS, JSON.stringify({url, title: (q.get('title') || '').trim(), text, at: Date.now()}));
+    localStorage.setItem('app-module', 'wishlist');
+    history.replaceState(null, '', location.pathname + location.hash);      // so a reload doesn't save it twice
+  }catch(e){}
+})();
 try{ let m = localStorage.getItem('app-module'); if(m==='route'){ m = 'places'; rtOpen = true; } if(MODULES[m]) currentMod = m; }catch(e){}
 const MOD = ()=>MODULES[currentMod];
 // the route planner's state (it's here, early, because the menu counts and the first screen may need it)
@@ -3342,7 +3359,7 @@ function itemCard(it){
 function prioTag(p){ return PRIO[p] ? `<span class="prio prio-${p}">${PRIO[p].label}</span>` : ''; }
 function wishCard(w){
   return `<div class="card${w.bought?' is-bought':''}" onclick="openWishDetail('${w.id}')">
-      <div class="thumb">${thumbHTML(w)}${w.bought?'':needsTag(missingWishInfo(w))}${w.bought?'<span class="bought-tag">✓ Bought</span>':''}</div>
+      <div class="thumb">${thumbHTML(w)}${w.bought ? '' : w.toSort ? '<span class="sort-tag">📥 To sort</span>' : needsTag(missingWishInfo(w))}${w.bought?'<span class="bought-tag">✓ Bought</span>':''}</div>
       <div class="card-body">
         <div class="cat">${esc(w.category||'uncategorized')}</div>
         <div class="name">${esc(w.name||'Untitled')}</div>
@@ -4447,6 +4464,82 @@ function openWishForm(w){
   document.getElementById('wishOverlay').classList.add('show');
 }
 function openWishAdd(){ openWishForm(null); }
+// ---------- a link shared from your phone: saved to the Wishlist straight away, then filled in from the page ----------
+let shareBusy = false;
+function shareName(s, link){
+  if(s.title) return s.title.slice(0, 200);
+  const h = link ? hostOf(link) : '';
+  if(/tiktok\./.test(h)) return 'TikTok video';
+  if(/youtube\.|youtu\.be/.test(h)) return 'YouTube video';
+  if(/instagram\./.test(h)) return 'Instagram post';
+  if(/facebook\.|fb\.watch/.test(h)) return 'Facebook post';
+  if(h) return h.replace(/^www\./, '');
+  return (s.text || 'Shared link').slice(0, 80);
+}
+function hostOf(u){ try{ return new URL(u).hostname.toLowerCase(); }catch(e){ return ''; } }
+// shared links carry tracking bits (?utm_source=…, fbclid…): drop them so the link is clean and duplicates are spotted
+function cleanLink(u){
+  try{
+    const x = new URL(u);
+    [...x.searchParams.keys()].forEach(k=>{ if(/^(utm_\w+|fbclid|gclid|gbraid|wbraid|dclid|msclkid|mc_cid|mc_eid|igshid|igsh|si|_r|ref_src|spm|share_id|sharer|_t|_d)$/i.test(k)) x.searchParams.delete(k); });
+    return x.toString().replace(/\?$/, '');
+  }catch(e){ return u; }
+}
+async function takeShare(){
+  if(shareBusy || !db || !wishesLoaded) return;
+  let s = null; try{ s = JSON.parse(localStorage.getItem(SHARE_LS) || 'null'); }catch(e){}
+  if(!s) return;
+  try{ localStorage.removeItem(SHARE_LS); }catch(e){}
+  if(Date.now() - (s.at || 0) > 7 * 864e5 || !(s.url || s.text || s.title)) return;
+  shareBusy = true;
+  if(currentMod !== 'wishlist') switchModule('wishlist');
+  const link = s.url ? cleanLink(normalizeLink(s.url)) : '';
+  const dup = link && wishes.find(w=>cleanLink(normalizeLink(w.link || ''))===link);
+  if(dup){ shareBusy = false; toast(`That’s already in your wishlist: “${dup.name}”.`); openWishDetail(dup.id); return; }
+  const name = shareName(s, link);
+  const data = {name, addedDate: todayIso(), link, description: s.text && s.text !== name ? s.text.slice(0, 300) : '', category: '', priority: '',
+                price: null, priceTotal: null, createdAt: new Date().toISOString(), bought: false, toSort: true, shared: true};
+  let ref = null;
+  try{ ref = await db.collection('wishes').add(data); }catch(e){}
+  shareBusy = false;
+  if(!ref){ toast("Couldn't save what you shared. Check your internet and share it again."); return; }
+  if(!link || !(HOST && HOST.readProduct)){ toast(`Saved “${name}” to your wishlist, under “To sort”.`); return; }
+  toast('Saved to your wishlist ✓ Reading the page…');
+  let r = null;
+  try{ r = await Promise.race([HOST.readProduct(link, itemCategories), new Promise(ok=>setTimeout(()=>ok(null), 45000))]); }catch(e){}
+  const upd = {}, got = [];
+  const p = r && r.ok && !r.list && r.product;
+  if(p){
+    if(p.name){ upd.name = String(p.name).slice(0, 200); got.push('name'); }
+    if(p.description){ upd.description = String(p.description).slice(0, 300); got.push('description'); }
+    if(p.category && itemCategories.includes(p.category)){ upd.category = p.category; got.push('category'); }
+    const price = Number(p.price);
+    if(Number.isFinite(price) && price > 0){
+      const cur = p.currency && CURRENCIES.includes(String(p.currency).toUpperCase()) ? String(p.currency).toUpperCase() : BASE;
+      upd.price = {amount: round2(price), currency: cur}; got.push('price');
+    }
+    if(r.url && cleanLink(r.url) !== link && !/tiktok|youtu|instagram|facebook/.test(hostOf(r.url))) upd.link = cleanLink(normalizeLink(r.url));
+  }
+  const ph = r && r.ok && r.photo;
+  if(ph && ph.b64 && assetsCap){
+    try{
+      const bin = atob(ph.b64), bytes = new Uint8Array(bin.length);
+      for(let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const up = await assetsCap.upload(new File([bytes], 'shared.' + ((ph.type || '').split('/')[1] || 'jpg'), {type: ph.type || 'image/jpeg'}));
+      if(up && up.url){ upd.imageId = up.id; upd.imageUrl = up.url; got.push('photo'); }
+    }catch(e){}
+  }
+  if(upd.name && upd.price) upd.toSort = false;               // a proper product: it's in your list like any other
+  if(Object.keys(upd).length){ try{ await db.collection('wishes').doc(ref.id).update(upd); }catch(e){} }
+  const nm = upd.name || name;
+  if(upd.toSort===false) toast(`✓ Added “${nm}” to your wishlist (${andList(got)}).`);
+  else if(got.length) toast(`Saved “${nm}”. I got the ${andList(got)}; the rest is up to you. It’s under “To sort”.`);
+  else toast(r && r.blocked ? `Saved the link. That site doesn’t let apps read it, so it’s under “To sort” for you to fill in.` : `Saved the link under “To sort”. I couldn’t read a product from it, so fill it in when you have a moment.`);
+}
+async function wishSorted(id){
+  try{ await db.collection('wishes').doc(id).update({toSort: false}); toast('Moved out of “To sort”.'); refreshOpenDetail('wishes', id); }
+  catch(e){ toast("Couldn't save that. Try again."); }
+}
 function openWishEdit(id){ const w = wishes.find(x=>x.id===id); if(w) openWishForm(w); }
 function closeWishForm(){ document.getElementById('wishOverlay').classList.remove('show'); }
 
@@ -4467,6 +4560,7 @@ async function saveWish(){
     priority: document.getElementById('w_prio').value,
     price,
     priceTotal: null,
+    toSort: false,
   };
   if(data.category && !itemCategories.includes(data.category)){ itemCategories.push(data.category); refreshPickerSelect('item'); rememberList('item'); }
   const btn = document.querySelector('#wishOverlay .save'); btn.disabled = true;
@@ -4509,6 +4603,8 @@ function openWishDetail(id){
       ? `<div class="status-box"><span>✓ Bought${w.boughtDate?` on ${fmtDate(w.boughtDate)}`:''}.</span>
            ${invExists ? `<button type="button" class="link-btn" onclick="openInInventory('${w.inventoryId}')">Open in inventory</button>` : ''}
            <button type="button" class="link-btn" onclick="markWishUnbought('${w.id}')">Mark as not bought</button></div>`
+      : w.toSort ? `<div class="status-box sort-box"><span>📥 You shared this from your phone. Check the details, then tap <b>Edit</b> and save.</span>
+           <button type="button" class="link-btn" onclick="wishSorted('${w.id}')">✓ It’s fine as it is</button></div>`
       : needsBox(missingWishInfo(w), `openWishEdit('${w.id}')`)}
     <div class="desc">${esc(w.description||'No description.')}</div>
     <div class="detail-meta"><div>Date added<b>${itemDate(w)?fmtDate(itemDate(w)):'—'}</b></div></div>
