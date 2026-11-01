@@ -1,4 +1,5 @@
 // My stuff: "import-link"
+// Also: a link shared to the Wishlist from the iPhone Shortcut (?kind=wish) is saved there and filled in from the shop page.
 // You share a TikTok link -> this reads the post (caption, hashtags, location tag, thumbnail),
 // asks Claude which places it is about, finds them on the map and adds them to your Places.
 // Anything it can't place goes to the Inbox in Places, so no link gets lost.
@@ -98,6 +99,14 @@ function sb(env: Env, fetchFn: typeof fetch) {
     },
     async remove(uid: string, col: string, id: string) {
       await fetchFn(`${url}/rest/v1/docs?user_id=eq.${uid}&col=eq.${col}&id=eq.${encodeURIComponent(id)}`, { method: 'DELETE', headers: headers() });
+    },
+    async getDoc(uid: string, col: string, id: string) {
+      const r = await fetchFn(`${url}/rest/v1/docs?select=data&user_id=eq.${uid}&col=eq.${col}&id=eq.${encodeURIComponent(id)}`, { headers: headers() });
+      if (!r.ok) return null; const rows = await r.json(); return rows.length ? rows[0].data : null;
+    },
+    async findBy(uid: string, col: string, field: string, value: string) {
+      const r = await fetchFn(`${url}/rest/v1/docs?select=id,data&user_id=eq.${uid}&col=eq.${col}&data->>${field}=eq.${encodeURIComponent(value)}&limit=1`, { headers: headers() });
+      if (!r.ok) return null; const rows = await r.json(); return rows.length ? rows[0] : null;
     },
     async savePhoto(uid: string, bytes: Uint8Array, type: string) {
       const id = crypto.randomUUID();
@@ -483,6 +492,27 @@ ${text.slice(0, 14000)}
   return a >= 0 && b > a ? JSON.parse(t.slice(a, b + 1)) : {};
 }
 const BLOCKED = "That shop doesn't let apps read its pages.";
+// a shop that blocks reading: its link often still names the product (alza.cz/sony-wh-1000xm5-cerna-d7051155.htm)
+export function slugOf(link: string) {
+  let last = '';
+  try { const u = new URL(link); last = decodeURIComponent(u.pathname).split('/').filter(Boolean).filter((x) => !/^(p|dp|product|produkt|item|cs|cz|en|de|sk)$/i.test(x)).sort((a, b) => b.length - a.length)[0] || ''; } catch (_) { return ''; }
+  const t = last.replace(/\.(html?|php|aspx?)$/i, '').replace(/([-_]?(d|p|i|id)?\d{5,})+$/i, '').replace(/[-_+]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return t.split(' ').filter((w) => /[a-z]/i.test(w)).length >= 2 ? t.slice(0, 160) : '';
+}
+export async function nameFromLink(link: string, key: string, fetchFn: typeof fetch) {
+  const slug = slugOf(link); if (!slug) return '';
+  if (!key) return slug.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+  try {
+    const r = await fetchFn('https://api.anthropic.com/v1/messages', {
+      method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: MODEL, max_tokens: 80, messages: [{ role: 'user', content:
+        `This is the last part of a link to a product page on ${hostOf(link).replace(/^www\./, '')}: "${slug}"\nWrite the product's name the way the shop would show it: proper capital letters, model numbers as written by the maker, and Czech letters with their accents if the words are Czech (cerna → černá). Don't add anything that isn't in the link. Reply with only the name, or NONE if it isn't a product.` }] }),
+    });
+    if (!r.ok) throw new Error('claude ' + r.status);
+    const j = await r.json(); const t = plain((j.content || []).map((c: Json) => c.text || '').join(''), 160).replace(/^["“]|["”]$/g, '');
+    return !t || /^none\b/i.test(t) ? '' : t;
+  } catch (_) { return slug.replace(/(^|\s)\S/g, (c) => c.toUpperCase()); }
+}
 // the text you copied from the shop page yourself (works for every shop: your browser already opened it)
 async function productFromText(text: string, link: string, cats: string[], key: string, fetchFn: typeof fetch) {
   if (!key) return { ok: false, error: 'The AI key is missing in Supabase.' };
@@ -518,7 +548,7 @@ export async function readProduct(link: string, cats: string[], key: string, fet
     // the shop turned us away: try the page-reading service, and let the AI read what it saw
     const text = key ? await viaReader(link, withTimeout(fetchFn, 20000)) : '';
     if (text) { const t = await productFromText(text, link, cats, key, fetchFn); if (t.ok) return { ...t, how: 'reader' }; }
-    return { ok: false, blocked: true, error: BLOCKED };
+    return { ok: false, blocked: true, error: BLOCKED, guessName: await nameFromLink(link, key, fetchFn) };
   }
   const prod: Json = productFromHtml(html, finalUrl);
   let how = 'page';
@@ -563,6 +593,66 @@ export async function readProduct(link: string, cats: string[], key: string, fet
   }
   if (!prod.name && prod.price == null) return { ok: false, error: "Couldn't find product details on that page. Fill it in yourself." };
   return { ok: true, how, url: finalUrl, product: { name: prod.name, price: prod.price, currency: prod.currency || '', description: prod.description || '', brand: prod.brand || '', shop: prod.shop || '', category: prod.category || '' }, photo };
+}
+
+// ---------------- a link shared to the Wishlist (iPhone Shortcut) ----------------
+// saved straight away (so nothing is lost), then filled in from the shop page; the answer is one line for the phone's notification
+const TRACKING = /^(utm_\w+|fbclid|gclid|gbraid|wbraid|dclid|msclkid|mc_cid|mc_eid|igshid|igsh|si|_r|ref_src|spm|share_id|sharer|_t|_d)$/i;
+export function cleanLink(u: string) {
+  try { const x = new URL(u); [...x.searchParams.keys()].forEach((k) => { if (TRACKING.test(k)) x.searchParams.delete(k); }); return x.toString().replace(/\?$/, ''); }
+  catch (_) { return u; }
+}
+const WISH_CURS = ['CZK', 'EUR', 'USD', 'GBP', 'PLN', 'HUF', 'CHF', 'CNY', 'JPY'];
+const CUR_SYM: Record<string, string> = { CZK: 'Kč', EUR: '€', USD: '$', GBP: '£', PLN: 'zł' };
+function fmtMoney(n: number, cur: string) { const v = n.toLocaleString('cs-CZ', { maximumFractionDigits: 2 }).replace(/\u00a0/g, ' '); return cur === 'EUR' || cur === 'USD' || cur === 'GBP' ? `${CUR_SYM[cur]}${v}` : `${v} ${CUR_SYM[cur] || cur}`; }
+function pragueDay() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Prague', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); }
+function shareTitle(link: string, extra: string) {
+  const h = hostOf(link).toLowerCase();
+  if (/tiktok\./.test(h)) return 'TikTok video';
+  if (/youtube\.|youtu\.be/.test(h)) return 'YouTube video';
+  if (/instagram\./.test(h)) return 'Instagram post';
+  if (/facebook\.|fb\.watch/.test(h)) return 'Facebook post';
+  return h ? h.replace(/^www\./, '') : (extra || 'Shared link').slice(0, 80);
+}
+export async function shareToWishlist(db: Json, uid: string, raw: string, title: string, key: string, fetchFn: typeof fetch) {
+  const u0 = ((/https?:\/\/[^\s"'<>]+/.exec(raw) || [])[0] || '').replace(/[),.;!?]+$/, '');
+  const link = u0 ? cleanLink(u0) : '';
+  const extra = raw.replace(u0, '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  if (!link && !extra && !title) return { ok: false, message: 'Nothing to save: share a link or some text.' };
+  if (link) {
+    const dup = await db.findBy(uid, 'wishes', 'link', link);
+    if (dup) return { ok: true, duplicate: true, id: dup.id, message: `Already in your wishlist: ${dup.data?.name || link}` };
+  }
+  const id = newId();
+  const data: Json = { name: (title || shareTitle(link, extra)).slice(0, 200), addedDate: pragueDay(), link, description: extra && extra !== title ? extra : '',
+    category: '', priority: '', price: null, priceTotal: null, createdAt: new Date().toISOString(), bought: false, toSort: true, shared: true };
+  await db.save(uid, 'wishes', id, data);
+  if (!link) return { ok: true, id, message: `Saved to your wishlist: ${data.name}` };
+  let cats: string[] = [];
+  try { const m = await db.getDoc(uid, 'meta', 'itemCategories'); if (m && Array.isArray(m.list)) cats = m.list.map(String).slice(0, 60); } catch (_) { /* no categories */ }
+  let r: Json = null;
+  try { r = await readProduct(link, cats, key, fetchFn); } catch (_) { r = null; }
+  const got: string[] = [];
+  const p = r && r.ok && !r.list && r.product;
+  if (p) {
+    if (p.name) { data.name = String(p.name).slice(0, 200); got.push('name'); }
+    if (p.description) { data.description = String(p.description).slice(0, 300); got.push('description'); }
+    if (p.category && cats.includes(p.category)) { data.category = p.category; got.push('category'); }
+    if (p.price != null && p.price > 0) { const cur = WISH_CURS.includes(p.currency) ? p.currency : 'CZK'; data.price = { amount: Math.round(p.price * 100) / 100, currency: cur }; got.push('price'); }
+  } else if (r && r.guessName) { data.name = r.guessName; got.push('name (from the link)'); }
+  if (r && r.ok && r.photo && r.photo.b64) {
+    try {
+      const bin = atob(r.photo.b64), bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const at = await db.savePhoto(uid, bytes, r.photo.type || 'image/jpeg'); if (at) { data.imageUrl = at; got.push('photo'); }
+    } catch (_) { /* no photo then */ }
+  }
+  if (p && p.name && data.price) data.toSort = false;
+  await db.save(uid, 'wishes', id, data);
+  const price = data.price ? ` · ${fmtMoney(data.price.amount, data.price.currency)}` : '';
+  if (!data.toSort) return { ok: true, id, message: `✓ Saved: ${data.name}${price}` };
+  if (/tiktok\.|youtube\.|youtu\.be|instagram\.|facebook\.|fb\.watch/i.test(hostOf(link))) return { ok: true, id, message: `✓ Saved: ${data.name}. It's under "To sort" for when you know what to get.` };
+  if (r && r.blocked) return { ok: true, id, message: `✓ Saved: ${data.name}. ${hostOf(link).replace(/^www\./, '')} doesn't let apps read its pages, so add the price when you can (it's under "To sort").` };
+  return { ok: true, id, message: `✓ Saved: ${data.name}${price}. Fill in the rest when you can (it's under "To sort").` };
 }
 
 // ---------------- the whole job ----------------
@@ -610,6 +700,9 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
   const started = Date.now();
   if (req.method !== 'POST') return reply({ ok: false, error: 'Use POST' }, 405);
   const db = sb(env, fetchFn);
+  let qKind = ''; try { qKind = new URL(req.url).searchParams.get('kind') || ''; } catch (_) { /* none */ }
+  // the Wishlist Shortcut shows the answer as a notification: plain words, not JSON
+  const say = (msg: string, status = 200) => new Response(msg, { status, headers: { ...CORS, 'Content-Type': 'text/plain; charset=utf-8' } });
 
   // who is asking: you in the app (logged in), or your iPhone Shortcut (with the share password)
   let user: Json = null;
@@ -619,7 +712,7 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
     const tok = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
     if (tok && tok.split('.').length === 3) user = await db.userFromToken(tok);
   }
-  if (!user || !user.id) return reply({ ok: false, error: 'Not allowed. Log in to the app, or check the Shortcut password.' }, 401);
+  if (!user || !user.id) return qKind === 'wish' ? say('Not saved: the Shortcut password doesn’t match SHARE_KEY in Supabase.', 401) : reply({ ok: false, error: 'Not allowed. Log in to the app, or check the Shortcut password.' }, 401);
   const uid = user.id;
 
   // the link (the Shortcut may send the whole shared text)
@@ -630,6 +723,12 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
     kind = String(j.kind || ''); cats = Array.isArray(j.categories) ? j.categories.map(String).slice(0, 60) : [];
     pasted = String(j.pageText || '').slice(0, 60000); safeUrl = String(j.url || '');
   } catch (_) { /* plain text */ }
+  if (!kind) kind = qKind;
+  if (kind === 'wish') {
+    let title = ''; try { const j = JSON.parse(raw); title = String(j.title || '').replace(/\s+/g, ' ').trim().slice(0, 200); text = [j.url, j.text].filter(Boolean).map(String).join(' ') || text; } catch (_) { /* plain text */ }
+    try { const r = await shareToWishlist(db, uid, String(text || ''), title, env.get('ANTHROPIC_API_KEY') || '', fetchFn); return say(r.message, r.ok ? 200 : 400); }
+    catch (_) { return say('Not saved: something went wrong. Try sharing it again.', 500); }
+  }
   if (kind === 'traffic') { let pts: unknown = null; try { pts = JSON.parse(raw).points; } catch (_) { /* below */ } return reply(await carTraffic(pts, env.get('TOMTOM_KEY') || '', fetchFn)); }
   const link = (/https?:\/\/[^\s"'<>]+/.exec(String(kind === 'product' ? (pasted ? safeUrl : text) : text)) || [])[0] || '';
   if (kind === 'product' && !link && pasted) return reply(await readProduct('', cats, env.get('ANTHROPIC_API_KEY') || '', fetchFn, pasted));

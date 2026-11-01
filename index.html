@@ -4519,7 +4519,7 @@ async function takeShare(){
       upd.price = {amount: round2(price), currency: cur}; got.push('price');
     }
     if(r.url && cleanLink(r.url) !== link && !/tiktok|youtu|instagram|facebook/.test(hostOf(r.url))) upd.link = cleanLink(normalizeLink(r.url));
-  }
+  }else if(r && r.guessName){ upd.name = String(r.guessName).slice(0, 200); got.push('name (from the link)'); }
   const ph = r && r.ok && r.photo;
   if(ph && ph.b64 && assetsCap){
     try{
@@ -4816,7 +4816,9 @@ async function readShopLink(){
     const filled = applyProduct(r.product, r.photo, true);
     setReadStatus(filled.length ? `✓ Filled in ${andList(filled)} from the shop page. Check them, then save.` : 'Read the shop page; your boxes were already filled in, so nothing changed.', 'ok');
   }else if(r && r.blocked){
-    setReadStatus('This shop doesn’t let apps read its pages. Copy the page instead (steps below), or fill it in yourself.', 'err');
+    const named = r.guessName ? applyProduct({name: r.guessName}, null, true) : [];
+    setReadStatus(named.length ? 'This shop doesn’t let apps read its pages, so I took the name from the link. For the price and photo, copy the page (steps below) or fill them in yourself.'
+      : 'This shop doesn’t let apps read its pages. Copy the page instead (steps below), or fill it in yourself.', 'err');
     document.getElementById('w_fillPanel').classList.add('open');
   }else setReadStatus((r && r.error) || "Couldn't read that page. Fill it in yourself.", 'err');
 }
