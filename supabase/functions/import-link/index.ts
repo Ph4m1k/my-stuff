@@ -674,8 +674,8 @@ export async function shareToWishlist(db: Json, uid: string, raw: string, title:
   if (p && p.name && data.price) data.toSort = false;
   await db.save(uid, 'wishes', id, data);
   const price = data.price ? ` · ${fmtMoney(data.price.amount, data.price.currency)}` : '';
-  // (while we try it out: say whether your phone's copy of the page was used)
-  const via = !phone || video ? '' : r && r.phone === 'check' ? ' [your phone got the robot check too]' : r && r.phone ? ' [read from your phone]' : '';
+  // only worth a word when even your phone got the robot check
+  const via = phone && !video && r && r.phone === 'check' ? ' (The shop showed your phone a robot check too.)' : '';
   if (!data.toSort) return { ok: true, id, message: `✓ Saved: ${data.name}${price}${via}` };
   if (/tiktok\.|youtube\.|youtu\.be|instagram\.|facebook\.|fb\.watch/i.test(hostOf(link))) return { ok: true, id, message: `✓ Saved: ${data.name}. It's under "To sort" for when you know what to get.` };
   if (r && r.blocked) return { ok: true, id, message: `✓ Saved: ${data.name}. ${hostOf(link).replace(/^www\./, '')} doesn't let apps read its pages, so add the price when you can (it's under "To sort").${via}` };
