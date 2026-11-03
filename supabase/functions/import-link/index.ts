@@ -499,19 +499,25 @@ export function slugOf(link: string) {
   const t = last.replace(/\.(html?|php|aspx?)$/i, '').replace(/([-_]?(d|p|i|id)?\d{5,})+$/i, '').replace(/[-_+]+/g, ' ').replace(/\s+/g, ' ').trim();
   return t.split(' ').filter((w) => /[a-z]/i.test(w)).length >= 2 ? t.slice(0, 160) : '';
 }
+// the words from the link with capitals: "sony wh 1000xm5 cerna" -> "Sony WH 1000XM5 Cerna"
+const BRANDS: Record<string, string> = { iphone: 'iPhone', ipad: 'iPad', imac: 'iMac', macbook: 'MacBook', airpods: 'AirPods', airtag: 'AirTag', playstation: 'PlayStation', xbox: 'Xbox', nintendo: 'Nintendo', lego: 'LEGO' };
+function titleWords(slug: string) { return slug.split(' ').map((w) => BRANDS[w.toLowerCase()] || (/\d/.test(w) && /[a-z]/i.test(w) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1))).join(' '); }
 export async function nameFromLink(link: string, key: string, fetchFn: typeof fetch) {
   const slug = slugOf(link); if (!slug) return '';
-  if (!key) return slug.replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+  if (!key) return titleWords(slug);
   try {
     const r = await fetchFn('https://api.anthropic.com/v1/messages', {
       method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: MODEL, max_tokens: 80, messages: [{ role: 'user', content:
-        `This is the last part of a link to a product page on ${hostOf(link).replace(/^www\./, '')}: "${slug}"\nWrite the product's name the way the shop would show it: proper capital letters, model numbers as written by the maker, and Czech letters with their accents if the words are Czech (cerna → černá). Don't add anything that isn't in the link. Reply with only the name, or NONE if it isn't a product.` }] }),
+      body: JSON.stringify({ model: MODEL, max_tokens: 60, messages: [{ role: 'user', content:
+        `Reformat these words from a shop link into a product name: "${slug}"\nOnly fix capital letters, how model numbers are written, and Czech accents if the words are Czech (cerna → černá). Keep every word, add nothing. The product may be newer than you know about: that's fine, never comment on it or question it. Reply with only the name.` }] }),
     });
     if (!r.ok) throw new Error('claude ' + r.status);
-    const j = await r.json(); const t = plain((j.content || []).map((c: Json) => c.text || '').join(''), 160).replace(/^["“]|["”]$/g, '');
-    return !t || /^none\b/i.test(t) ? '' : t;
-  } catch (_) { return slug.replace(/(^|\s)\S/g, (c) => c.toUpperCase()); }
+    const j = await r.json(); const t = plain((j.content || []).map((c: Json) => c.text || '').join(''), 200).replace(/^["“']|["”']$/g, '').trim();
+    // only accept a tidied version of the same words (no sentences, nothing added)
+    const words = fold(t).split(' ').filter(Boolean), have = fold(slug).replace(/ /g, '');
+    const same = words.length > 0 && words.filter((w) => have.includes(w)).length / words.length >= 0.8;
+    return t && same && t.length <= slug.length * 1.5 + 12 && !/[.!?:]\s|^i\s|cannot|can't|not a real/i.test(t) ? t : titleWords(slug);
+  } catch (_) { return titleWords(slug); }
 }
 // the text you copied from the shop page yourself (works for every shop: your browser already opened it)
 async function productFromText(text: string, link: string, cats: string[], key: string, fetchFn: typeof fetch) {
