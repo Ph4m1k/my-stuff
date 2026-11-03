@@ -539,8 +539,24 @@ async function viaReader(link: string, fetchFn: typeof fetch) {
     return /just a moment|captcha|verification|robot|access denied|not found/i.test(String(d.title || '')) || text.length < 300 ? '' : text;
   } catch (_) { return ''; }
 }
-export async function readProduct(link: string, cats: string[], key: string, fetchFn: typeof fetch, pasted = '') {
+// a security-check page instead of the shop ("Just a moment…", captcha)
+export const isCheckPage = (h: string) => /captcha|are you a robot|access denied|enable javascript and cookies|just a moment|cf-chl|px-captcha/i.test(h.slice(0, 40000)) && !/application\/ld\+json|og:title/i.test(h);
+// phone: the page your iPhone downloaded itself (from your own connection), as page code or as plain text
+export async function readProduct(link: string, cats: string[], key: string, fetchFn: typeof fetch, pasted = '', phone = '') {
   if (pasted) return productFromText(pasted, link, cats, key, fetchFn);
+  if (phone) {
+    const isHtml = /<(html|head|body|meta|script|div)\b/i.test(phone.slice(0, 200000));
+    if (isHtml && !isCheckPage(phone)) {
+      const r = await readProduct(link, cats, key, async (u: any, init?: any) => String(u) === link ? new Response(phone, { status: 200, headers: { 'content-type': 'text/html' } }) : fetchFn(u, init));
+      return { ...r, phone: 'page' };
+    }
+    if (!isHtml && phone.length > 200 && !/just a moment|captcha|are you a robot|access denied/i.test(phone.slice(0, 3000))) {
+      const t = await productFromText(phone, link, cats, key, fetchFn);
+      if (t.ok) return { ...t, phone: 'text' };
+    }
+    const r = await readProduct(link, cats, key, fetchFn);       // your phone got the check page too: try the usual way
+    return { ...r, phone: 'check' };
+  }
   if (privateHost(link)) return { ok: false, error: "That isn't a shop page on the internet." };
   const quick = withTimeout(fetchFn, 12000);
   let r: Response | null = null;
@@ -584,6 +600,7 @@ export async function readProduct(link: string, cats: string[], key: string, fet
   }
   // the photo: brought along (shops' picture links can stop working)
   let photo: Json = null;
+  const imageUrl = prod.image && !privateHost(prod.image) ? prod.image : '';
   if (prod.image && !privateHost(prod.image)) {
     try {
       const ir = await fetchFn(prod.image, { headers: { 'User-Agent': UA, Accept: 'image/avif,image/webp,image/png,image/jpeg,*/*;q=0.8', Referer: finalUrl } });
@@ -598,7 +615,7 @@ export async function readProduct(link: string, cats: string[], key: string, fet
     } catch (_) { /* no photo then */ }
   }
   if (!prod.name && prod.price == null) return { ok: false, error: "Couldn't find product details on that page. Fill it in yourself." };
-  return { ok: true, how, url: finalUrl, product: { name: prod.name, price: prod.price, currency: prod.currency || '', description: prod.description || '', brand: prod.brand || '', shop: prod.shop || '', category: prod.category || '' }, photo };
+  return { ok: true, how, url: finalUrl, product: { name: prod.name, price: prod.price, currency: prod.currency || '', description: prod.description || '', brand: prod.brand || '', shop: prod.shop || '', category: prod.category || '' }, photo, imageUrl };
 }
 
 // ---------------- a link shared to the Wishlist (iPhone Shortcut) ----------------
@@ -620,7 +637,7 @@ function shareTitle(link: string, extra: string) {
   if (/facebook\.|fb\.watch/.test(h)) return 'Facebook post';
   return h ? h.replace(/^www\./, '') : (extra || 'Shared link').slice(0, 80);
 }
-export async function shareToWishlist(db: Json, uid: string, raw: string, title: string, key: string, fetchFn: typeof fetch) {
+export async function shareToWishlist(db: Json, uid: string, raw: string, title: string, key: string, fetchFn: typeof fetch, phone = '') {
   const u0 = ((/https?:\/\/[^\s"'<>]+/.exec(raw) || [])[0] || '').replace(/[),.;!?]+$/, '');
   const link = u0 ? cleanLink(u0) : '';
   const extra = raw.replace(u0, '').replace(/\s+/g, ' ').trim().slice(0, 300);
@@ -637,7 +654,8 @@ export async function shareToWishlist(db: Json, uid: string, raw: string, title:
   let cats: string[] = [];
   try { const m = await db.getDoc(uid, 'meta', 'itemCategories'); if (m && Array.isArray(m.list)) cats = m.list.map(String).slice(0, 60); } catch (_) { /* no categories */ }
   let r: Json = null;
-  try { r = await readProduct(link, cats, key, fetchFn); } catch (_) { r = null; }
+  const video = /tiktok\.|youtube\.|youtu\.be|instagram\.|facebook\.|fb\.watch/i.test(hostOf(link));
+  try { r = await readProduct(link, cats, key, fetchFn, '', video ? '' : phone.slice(0, 3_000_000)); } catch (_) { r = null; }
   const got: string[] = [];
   const p = r && r.ok && !r.list && r.product;
   if (p) {
@@ -652,13 +670,16 @@ export async function shareToWishlist(db: Json, uid: string, raw: string, title:
       const at = await db.savePhoto(uid, bytes, r.photo.type || 'image/jpeg'); if (at) { data.imageUrl = at; got.push('photo'); }
     } catch (_) { /* no photo then */ }
   }
+  if (!data.imageUrl && r && r.ok && r.imageUrl && /^https:\/\//.test(r.imageUrl)) { data.imageUrl = r.imageUrl; got.push('photo'); }
   if (p && p.name && data.price) data.toSort = false;
   await db.save(uid, 'wishes', id, data);
   const price = data.price ? ` · ${fmtMoney(data.price.amount, data.price.currency)}` : '';
-  if (!data.toSort) return { ok: true, id, message: `✓ Saved: ${data.name}${price}` };
+  // (while we try it out: say whether your phone's copy of the page was used)
+  const via = !phone || video ? '' : r && r.phone === 'check' ? ' [your phone got the robot check too]' : r && r.phone ? ' [read from your phone]' : '';
+  if (!data.toSort) return { ok: true, id, message: `✓ Saved: ${data.name}${price}${via}` };
   if (/tiktok\.|youtube\.|youtu\.be|instagram\.|facebook\.|fb\.watch/i.test(hostOf(link))) return { ok: true, id, message: `✓ Saved: ${data.name}. It's under "To sort" for when you know what to get.` };
-  if (r && r.blocked) return { ok: true, id, message: `✓ Saved: ${data.name}. ${hostOf(link).replace(/^www\./, '')} doesn't let apps read its pages, so add the price when you can (it's under "To sort").` };
-  return { ok: true, id, message: `✓ Saved: ${data.name}${price}. Fill in the rest when you can (it's under "To sort").` };
+  if (r && r.blocked) return { ok: true, id, message: `✓ Saved: ${data.name}. ${hostOf(link).replace(/^www\./, '')} doesn't let apps read its pages, so add the price when you can (it's under "To sort").${via}` };
+  return { ok: true, id, message: `✓ Saved: ${data.name}${price}. Fill in the rest when you can (it's under "To sort").${via}` };
 }
 
 // ---------------- the whole job ----------------
@@ -731,8 +752,8 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
   } catch (_) { /* plain text */ }
   if (!kind) kind = qKind;
   if (kind === 'wish') {
-    let title = ''; try { const j = JSON.parse(raw); title = String(j.title || '').replace(/\s+/g, ' ').trim().slice(0, 200); text = [j.url, j.text].filter(Boolean).map(String).join(' ') || text; } catch (_) { /* plain text */ }
-    try { const r = await shareToWishlist(db, uid, String(text || ''), title, env.get('ANTHROPIC_API_KEY') || '', fetchFn); return say(r.message, r.ok ? 200 : 400); }
+    let title = '', phone = ''; try { const j = JSON.parse(raw); title = String(j.title || '').replace(/\s+/g, ' ').trim().slice(0, 200); text = [j.url, j.text].filter(Boolean).map(String).join(' ') || text; phone = typeof j.page === 'string' ? j.page : ''; } catch (_) { /* plain text */ }
+    try { const r = await shareToWishlist(db, uid, String(text || ''), title, env.get('ANTHROPIC_API_KEY') || '', fetchFn, phone); return say(r.message, r.ok ? 200 : 400); }
     catch (_) { return say('Not saved: something went wrong. Try sharing it again.', 500); }
   }
   if (kind === 'traffic') { let pts: unknown = null; try { pts = JSON.parse(raw).points; } catch (_) { /* below */ } return reply(await carTraffic(pts, env.get('TOMTOM_KEY') || '', fetchFn)); }
