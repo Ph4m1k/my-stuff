@@ -638,7 +638,8 @@ function shareTitle(link: string, extra: string) {
   return h ? h.replace(/^www\./, '') : (extra || 'Shared link').slice(0, 80);
 }
 // names and descriptions in English: translated only when they aren't already (brands, models and sizes stay as they are)
-const looksEnglish = (t: string) => !/[áčďéěíňóřšťúůýž]/i.test(t) && !/\b(a|na|pro|s|se|ve|bez|černá|černý|bílá|bílý|modrá|modrý|šedá|stříbrná|zlatá|růžová|zelená|sluchátka|telefon|mobilní|hodinky|kabel|nabíječka|pouzdro|taška|bunda|boty|stolek|stůl|židle|lampa|knihovna|sada)\b/i.test(t);
+// (small Czech words count only in lower case: "pro" is Czech, "Pro" in "iPhone 18 Pro" isn't)
+const looksEnglish = (t: string) => !/[áčďéěíňóřšťúůýž]/i.test(t) && !/(^|\s)(a|na|pro|s|se|ve|bez|sada|černý|bílá|bílý|modrý|sluchátka|telefon|mobilní|hodinky|kabel|pouzdro|bunda|boty|stolek|židle|lampa|knihovna)(?=\s|$)/.test(t);
 let lastAiError = '';
 // product names: a stronger model than the quick one (better at official names); falls back to the quick one if it isn't available
 const NAME_MODEL = 'claude-sonnet-5';
@@ -659,7 +660,16 @@ async function askJson(key: string, fetchFn: typeof fetch, prompt: string, tools
 }
 const nums = (x: string) => (x.match(/\d+/g) || []).join(',');
 // the same product, not another one: same numbers (2TB, 1000XM5…) and no comments instead of a name
-const sameItem = (n: string, was: string) => !!n && nums(n) === nums(was) && !/cannot|not a real|i'm not sure|unknown|no official/i.test(n) && n.length <= Math.max(120, was.length * 2);
+// the details the shop already wrote in a language-neutral way must all stay: model codes (126234, 2TB), abbreviations (MOP),
+// and capitalised names without Czech letters (Rolex, Datejust, iPhone). Only Czech words may change.
+const CZ_WORDS = /^(a|na|pro|s|se|ve|bez|nová|nový|sada|edice|barva|černá|bílá|modrá|šedá|zlatá|růžová|zelená|červená|stříbrná)$/i;
+const keepWords = (t: string) => t.split(/[\s,()/–-]+/).filter((w) => w.length >= 2 && !/[áčďéěíňóřšťúůýž]/i.test(w) && !CZ_WORDS.test(w)
+  && (/\d/.test(w) || /^[A-Z]{2,}$/.test(w) || /^[A-Z][a-z]/.test(w) || /^i[A-Z]/.test(w)));
+const sameItem = (n: string, was: string) => {
+  if (!n || nums(n) !== nums(was) || /cannot|not a real|i'm not sure|unknown|no official/i.test(n) || n.length > Math.max(120, was.length * 2)) return false;
+  const have = fold(n).split(' ');
+  return keepWords(was).every((w) => have.includes(fold(w)) || fold(n).replace(/ /g, '').includes(fold(w).replace(/ /g, '')));
+};
 // English name: 1) already English, 2) the official English name, found on the web, 3) only then a translation
 export async function toEnglish(name: string, desc: string, key: string, fetchFn: typeof fetch) {
   if (!key || (looksEnglish(name) && looksEnglish(desc))) return null;
