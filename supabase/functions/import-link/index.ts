@@ -639,13 +639,21 @@ function shareTitle(link: string, extra: string) {
 }
 // names and descriptions in English: translated only when they aren't already (brands, models and sizes stay as they are)
 const looksEnglish = (t: string) => !/[áčďéěíňóřšťúůýž]/i.test(t) && !/\b(a|na|pro|s|se|ve|bez|černá|černý|bílá|bílý|modrá|modrý|šedá|stříbrná|zlatá|růžová|zelená|sluchátka|telefon|mobilní|hodinky|kabel|nabíječka|pouzdro|taška|bunda|boty|stolek|stůl|židle|lampa|knihovna|sada)\b/i.test(t);
-async function askJson(key: string, fetchFn: typeof fetch, prompt: string, tools: Json[] = [], maxTokens = 400) {
+let lastAiError = '';
+// product names: a stronger model than the quick one (better at official names); falls back to the quick one if it isn't available
+const NAME_MODEL = 'claude-sonnet-5';
+async function askJson(key: string, fetchFn: typeof fetch, prompt: string, tools: Json[] = [], maxTokens = 400, model = NAME_MODEL): Promise<Json> {
   const r = await fetchFn('https://api.anthropic.com/v1/messages', {
     method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, ...(tools.length ? { tools } : {}), messages: [{ role: 'user', content: prompt }] }),
+    body: JSON.stringify({ model, max_tokens: maxTokens, ...(tools.length ? { tools } : {}), messages: [{ role: 'user', content: prompt }] }),
   });
-  if (!r.ok) return null;
+  if (!r.ok && model !== MODEL && (r.status === 404 || r.status === 400)) {
+    const why = (await r.clone().text()).slice(0, 200);
+    if (/model/i.test(why)) return askJson(key, fetchFn, prompt, tools, maxTokens, MODEL);
+  }
+  if (!r.ok) { lastAiError = `${r.status} ${(await r.text()).slice(0, 160)}`; return null; }
   const j = await r.json(); const t = (j.content || []).filter((c: Json) => c.type === 'text').map((c: Json) => c.text || '').join('');
+  lastAiError = t ? '' : 'empty answer';
   const a = t.lastIndexOf('{'), b = t.lastIndexOf('}'); if (a < 0 || b <= a) return null;
   try { return JSON.parse(t.slice(a, b + 1)); } catch (_) { return null; }
 }
@@ -655,7 +663,7 @@ const sameItem = (n: string, was: string) => !!n && nums(n) === nums(was) && !/c
 // English name: 1) already English, 2) the official English name, found on the web, 3) only then a translation
 export async function toEnglish(name: string, desc: string, key: string, fetchFn: typeof fetch) {
   if (!key || (looksEnglish(name) && looksEnglish(desc))) return null;
-  let en = '', how = '';
+  let en = '', how = '', searchNote = '';
   if (!looksEnglish(name)) {
     try {
       const o = await askJson(key, fetchFn,
@@ -663,19 +671,20 @@ export async function toEnglish(name: string, desc: string, key: string, fetchFn
         [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }], 1200);
       const n = o && o.found ? plain(o.name, 200) : '';
       if (sameItem(n, name) && looksEnglish(n)) { en = n; how = 'found'; }
+      else searchNote = lastAiError ? 'search error: ' + lastAiError : o ? `search: ${o.found ? 'rejected ' + n : 'not found'}` : 'search: no JSON';
     } catch (_) { /* no web search: translate below */ }
   }
   let d = desc;
   try {
     const o = await askJson(key, fetchFn,
-      `Translate into English. Keep brand names, product and model names, numbers and sizes exactly as written; translate colours and ordinary words. If a part is already English, leave it. The product may be newer than you know: never comment on it.\nReply with only JSON: {"name":"...","description":"..."}\nName: ${name}\nDescription: ${desc || '(none)'}`);
+      `Translate this shop's product name and description into natural English.\n- Keep brand names, product and model names, numbers and sizes exactly as written.\n- Translate every Czech word, including colours and adjectives (e.g. "burgundská červená" or "burgundsky červená" → "Burgundy Red", "ledovcově modrá" → "Glacier Blue", "černá" → "Black").\n- Write colour and edition names in Title Case, the way the maker would.\n- If a part is already English, leave it. The product may be newer than you know: never comment on it.\nReply with only JSON: {"name":"...","description":"..."}\nName: ${name}\nDescription: ${desc || '(none)'}`);
     if (o) {
       const n = plain(o.name, 200), dd = plain(o.description, 300);
       if (!en && sameItem(n, name)) { en = n; how = 'translated'; }
       if (desc && dd && !/^\(none\)$/i.test(dd)) d = dd;
     }
   } catch (_) { /* keep the shop's words */ }
-  return en || d !== desc ? { name: en || name, description: d, how: how || 'kept' } : null;
+  return en || d !== desc ? { name: en || name, description: d, how: how || 'kept', note: searchNote } : null;
 }
 export async function shareToWishlist(db: Json, uid: string, raw: string, title: string, key: string, fetchFn: typeof fetch, phone = '') {
   const u0 = ((/https?:\/\/[^\s"'<>]+/.exec(raw) || [])[0] || '').replace(/[),.;!?]+$/, '');
@@ -714,7 +723,7 @@ export async function shareToWishlist(db: Json, uid: string, raw: string, title:
   if (p && p.name && data.price) data.toSort = false;
   if (got.length && !video) {
     const en = await toEnglish(data.name, data.description, key, fetchFn);
-    if (en && (en.name !== data.name || en.description !== data.description)) { if (en.name !== data.name) { data.originalName = data.name; data.nameFrom = en.how; } data.name = en.name; data.description = en.description; }
+    if (en && (en.name !== data.name || en.description !== data.description)) { if (en.name !== data.name) { data.originalName = data.name; data.nameFrom = en.how; } if (en.note) data.nameNote = en.note.slice(0, 200); data.name = en.name; data.description = en.description; }
   }
   await db.save(uid, 'wishes', id, data);
   const price = data.price ? ` · ${fmtMoney(data.price.amount, data.price.currency)}` : '';
