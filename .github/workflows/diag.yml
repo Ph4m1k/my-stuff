@@ -1,0 +1,28 @@
+name: diag
+on:
+  push:
+    branches: [diag]
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: latest shared wishes (how the name was made)
+        continue-on-error: true
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set +e
+          cat > q.json <<'J'
+          {"query":"select data->>'nameFrom' as f, data->>'nameNote' as n, (data->'price') is not null and data->>'price' <> 'null' as p, data->>'imageUrl' is not null as i, data->>'toSort' as s, length(data->>'name') as l, data->>'createdAt' as c from docs where col = 'wishes' and data->>'shared' = 'true' order by data->>'createdAt' desc limit 6"}
+          J
+          curl -s -o out.json -w '%{http_code}' -X POST "https://api.supabase.com/v1/projects/qzsrltvrvlqsftthibml/database/query" -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H "Content-Type: application/json" --data @q.json > code.txt
+          python3 -c "
+          import json
+          c=open('code.txt').read(); raw=open('out.json').read()
+          try:
+            rows=json.loads(raw); out=' || '.join(f\"{r['c'][11:16]} from={r['f']} price={r['p']} img={r['i']} toSort={r['s']} note={(r['n'] or '')[:150]}\" for r in rows)
+          except Exception as e: out='bad '+raw[:200]
+          print(c, out)" > o.txt
+          echo "::notice title=wishes::$(cat o.txt)"
+          exit 0
