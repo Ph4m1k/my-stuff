@@ -637,6 +637,46 @@ function shareTitle(link: string, extra: string) {
   if (/facebook\.|fb\.watch/.test(h)) return 'Facebook post';
   return h ? h.replace(/^www\./, '') : (extra || 'Shared link').slice(0, 80);
 }
+// names and descriptions in English: translated only when they aren't already (brands, models and sizes stay as they are)
+const looksEnglish = (t: string) => !/[áčďéěíňóřšťúůýž]/i.test(t) && !/\b(a|na|pro|s|se|ve|bez|černá|černý|bílá|bílý|modrá|modrý|šedá|stříbrná|zlatá|růžová|zelená|sluchátka|telefon|mobilní|hodinky|kabel|nabíječka|pouzdro|taška|bunda|boty|stolek|stůl|židle|lampa|knihovna|sada)\b/i.test(t);
+async function askJson(key: string, fetchFn: typeof fetch, prompt: string, tools: Json[] = [], maxTokens = 400) {
+  const r = await fetchFn('https://api.anthropic.com/v1/messages', {
+    method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, ...(tools.length ? { tools } : {}), messages: [{ role: 'user', content: prompt }] }),
+  });
+  if (!r.ok) return null;
+  const j = await r.json(); const t = (j.content || []).filter((c: Json) => c.type === 'text').map((c: Json) => c.text || '').join('');
+  const a = t.lastIndexOf('{'), b = t.lastIndexOf('}'); if (a < 0 || b <= a) return null;
+  try { return JSON.parse(t.slice(a, b + 1)); } catch (_) { return null; }
+}
+const nums = (x: string) => (x.match(/\d+/g) || []).join(',');
+// the same product, not another one: same numbers (2TB, 1000XM5…) and no comments instead of a name
+const sameItem = (n: string, was: string) => !!n && nums(n) === nums(was) && !/cannot|not a real|i'm not sure|unknown|no official/i.test(n) && n.length <= Math.max(120, was.length * 2);
+// English name: 1) already English, 2) the official English name, found on the web, 3) only then a translation
+export async function toEnglish(name: string, desc: string, key: string, fetchFn: typeof fetch) {
+  if (!key || (looksEnglish(name) && looksEnglish(desc))) return null;
+  let en = '', how = '';
+  if (!looksEnglish(name)) {
+    try {
+      const o = await askJson(key, fetchFn,
+        `A Czech shop sells this product: "${name}".\nSearch the web for this exact item's official English name: how the maker, or English-language shops, write it (their exact colour or edition names, e.g. Apple's "Midnight Blue", not a word-for-word translation). It must be the same item: same model, size and colour.\nReply with only JSON: {"name":"the English name","found":true}, or {"name":"","found":false} if you can't find this exact item.`,
+        [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }], 1200);
+      const n = o && o.found ? plain(o.name, 200) : '';
+      if (sameItem(n, name) && looksEnglish(n)) { en = n; how = 'found'; }
+    } catch (_) { /* no web search: translate below */ }
+  }
+  let d = desc;
+  try {
+    const o = await askJson(key, fetchFn,
+      `Translate into English. Keep brand names, product and model names, numbers and sizes exactly as written; translate colours and ordinary words. If a part is already English, leave it. The product may be newer than you know: never comment on it.\nReply with only JSON: {"name":"...","description":"..."}\nName: ${name}\nDescription: ${desc || '(none)'}`);
+    if (o) {
+      const n = plain(o.name, 200), dd = plain(o.description, 300);
+      if (!en && sameItem(n, name)) { en = n; how = 'translated'; }
+      if (desc && dd && !/^\(none\)$/i.test(dd)) d = dd;
+    }
+  } catch (_) { /* keep the shop's words */ }
+  return en || d !== desc ? { name: en || name, description: d, how: how || 'kept' } : null;
+}
 export async function shareToWishlist(db: Json, uid: string, raw: string, title: string, key: string, fetchFn: typeof fetch, phone = '') {
   const u0 = ((/https?:\/\/[^\s"'<>]+/.exec(raw) || [])[0] || '').replace(/[),.;!?]+$/, '');
   const link = u0 ? cleanLink(u0) : '';
@@ -672,11 +712,16 @@ export async function shareToWishlist(db: Json, uid: string, raw: string, title:
   }
   if (!data.imageUrl && r && r.ok && r.imageUrl && /^https:\/\//.test(r.imageUrl)) { data.imageUrl = r.imageUrl; got.push('photo'); }
   if (p && p.name && data.price) data.toSort = false;
+  if (got.length && !video) {
+    const en = await toEnglish(data.name, data.description, key, fetchFn);
+    if (en && (en.name !== data.name || en.description !== data.description)) { if (en.name !== data.name) { data.originalName = data.name; data.nameFrom = en.how; } data.name = en.name; data.description = en.description; }
+  }
   await db.save(uid, 'wishes', id, data);
   const price = data.price ? ` · ${fmtMoney(data.price.amount, data.price.currency)}` : '';
   // only worth a word when even your phone got the robot check
   const via = phone && !video && r && r.phone === 'check' ? ' (The shop showed your phone a robot check too.)' : '';
-  if (!data.toSort) return { ok: true, id, message: `✓ Saved: ${data.name}${price}${via}` };
+  const tr = data.nameFrom === 'translated' ? ' (name translated)' : '';
+  if (!data.toSort) return { ok: true, id, message: `✓ Saved: ${data.name}${price}${tr}${via}` };
   if (/tiktok\.|youtube\.|youtu\.be|instagram\.|facebook\.|fb\.watch/i.test(hostOf(link))) return { ok: true, id, message: `✓ Saved: ${data.name}. It's under "To sort" for when you know what to get.` };
   if (r && r.blocked) return { ok: true, id, message: `✓ Saved: ${data.name}. ${hostOf(link).replace(/^www\./, '')} doesn't let apps read its pages, so add the price when you can (it's under "To sort").${via}` };
   return { ok: true, id, message: `✓ Saved: ${data.name}${price}. Fill in the rest when you can (it's under "To sort").${via}` };
