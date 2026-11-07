@@ -4579,7 +4579,10 @@ async function pickVersion(id, gi, val){
   // every group picked: that version's price and photo
   const c = ch.every(Boolean) && (v.combos || []).find(x=>x.values && x.values.every((y, k)=>y===ch[k]));
   if(c && c.price != null) upd.price = {amount: c.price, currency: (w.price && w.price.currency) || BASE};
-  if(c && c.image && /^https:\/\//.test(c.image)) upd.imageUrl = c.image;
+  // only some picked (e.g. the edition): that edition's photo and shop page already
+  const near = c || (v.combos || []).find(x=>x.values && ch.every((y, k)=>!y || x.values[k]===y));
+  if(near && near.image && /^https:\/\//.test(near.image)) upd.imageUrl = near.image;
+  if(near && near.url && /^https:\/\//.test(near.url)) upd.link = c ? near.url : near.url.replace(/\?variant=\d+$/, '');
   try{ await db.collection('wishes').doc(id).update(upd); }catch(e){ toast("Couldn't save your choice. Try again."); return; }
   refreshOpenDetail('wishes', id);
 }

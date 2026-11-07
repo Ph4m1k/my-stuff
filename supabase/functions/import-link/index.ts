@@ -401,13 +401,13 @@ function privateHost(u: string) {
 }
 // ---------- versions of one product (finish, size, colour…): the item keeps a general name, you pick a version ----------
 // variants: groups like {name:'Finish', values:[…]}, and combos (one per version the shop sells) with its price and photo
-export type Variants = { groups: { name: string; values: string[] }[]; combos: { values: string[]; price: number | null; image: string }[] };
+export type Variants = { groups: { name: string; values: string[] }[]; combos: { values: string[]; price: number | null; image: string; url?: string }[] };
 const uniq = (a: string[]) => [...new Set(a.filter(Boolean))];
 function tidyVariants(groups: { name: string; values: string[] }[], combos: Variants['combos']): Variants | null {
   // only groups where there's really a choice (2+ values); combos keep just those groups' values
   const keep = groups.map((g, i) => ({ g, i })).filter(({ g }) => uniq(g.values).length >= 2 && uniq(g.values).length <= 40);
   if (!keep.length) return null;
-  const cs = combos.map((c) => ({ values: keep.map(({ i }) => plain(c.values[i], 80)), price: c.price, image: c.image })).filter((c) => c.values.every(Boolean)).slice(0, 120);
+  const cs = combos.map((c) => ({ values: keep.map(({ i }) => plain(c.values[i], 80)), price: c.price, image: c.image, ...(c.url ? { url: c.url } : {}) })).filter((c) => c.values.every(Boolean)).slice(0, 300);
   return { groups: keep.map(({ g }) => ({ name: plain(g.name, 40) || 'Option', values: uniq(g.values.map((v) => plain(v, 80))) })), combos: cs };
 }
 // Shopify shops: the product's own data (title, options, every version with price in cents and its photo)
@@ -470,6 +470,58 @@ export function variantsFromHtml(html: string, pageUrl: string, ld: Json[] = [])
     }
   }
   return null;
+}
+// ---------- a Shopify page that shows a family of products ("Tire Tables": one table per race, each with glass/bowl/base) ----------
+// -> one item with a general name; the edition and the products' own options become the versions to pick
+const QUOTED = /[„“"”«»‚‘'][^„“"”«»‚‘']{2,60}[„“"”«»‚‘']/;
+function familyKey(title: string) { return fold(title.replace(QUOTED, ' ').replace(/\s+[-–]\s+[^-–]{1,20}$/, '').replace(/\s+/g, ' ')).trim(); }
+function familyLabel(title: string, base: string) {
+  const q = QUOTED.exec(title); if (q) return plain(q[0].slice(1, -1), 80);
+  return plain(title.slice(base.length).replace(/^[\s\-–:,|]+/, ''), 80) || plain(title, 80);
+}
+export async function shopifyListing(html: string, pageUrl: string, fetchFn: typeof fetch) {
+  if (!/cdn\.shopify\.com|Shopify\.shop/i.test(html)) return null;
+  let u: URL; try { u = new URL(pageUrl); } catch (_) { return null; }
+  if (/\/products\//.test(u.pathname)) return null;
+  const handles = uniq([...html.matchAll(/\/products\/([a-z0-9][a-z0-9-]*)/gi)].map((m) => m[1].toLowerCase())).slice(0, 80);
+  if (handles.length < 2) return null;
+  const get = withTimeout(fetchFn, 10000), hdr = { headers: { 'User-Agent': UA, Accept: 'application/json' } };
+  const absImg = (x: unknown) => { try { return x ? new URL(String(x), pageUrl).href : ''; } catch { return ''; } };
+  // every product the page links to, with its options, versions, prices, photos and text
+  let prods: Json[] = [];
+  try { const r = await get(`${u.origin}/products.json?limit=250`, hdr); if (r.ok) prods = ((await r.json()).products || []).filter((p: Json) => handles.includes(String(p.handle))); } catch (_) { /* try one by one */ }
+  const norm = prods.map((p: Json) => ({
+    title: String(p.title || ''), handle: String(p.handle), body: String(p.body_html || ''),
+    options: (p.options || []).map((o: Json) => String(o.name || o)), image: absImg(p.images?.[0]?.src || p.image?.src),
+    variants: (p.variants || []).map((v: Json) => ({ id: v.id, opts: [v.option1, v.option2, v.option3].filter((x: unknown) => x != null).map(String), price: toPrice(v.price),
+      image: absImg((p.images || []).find((im: Json) => (im.variant_ids || []).includes(v.id))?.src || '') })),
+  }));
+  if (norm.length < 2) {
+    const one = await Promise.all(handles.slice(0, 20).map(async (h) => { try { const r = await get(`${u.origin}/products/${h}.js`, hdr); return r.ok ? await r.json() : null; } catch (_) { return null; } }));
+    for (const p of one.filter(Boolean) as Json[]) norm.push({
+      title: String(p.title || ''), handle: String(p.handle), body: String(p.description || ''),
+      options: (p.options || []).map((o: Json) => String(typeof o === 'string' ? o : o.name)), image: absImg(p.featured_image || p.images?.[0]),
+      variants: (p.variants || []).map((v: Json) => ({ id: v.id, opts: [v.option1, v.option2, v.option3].filter((x: unknown) => x != null).map(String), price: typeof v.price === 'number' ? v.price / 100 : toPrice(v.price), image: absImg(v.featured_image?.src || '') })),
+    });
+  }
+  // the biggest family: products named alike apart from their quoted edition ("Goodyear Eagle Tire Table „WEC Monza 2026“")
+  const fams = new Map<string, Json[]>();
+  for (const p of norm) { const k = familyKey(p.title); if (!k) continue; fams.set(k, [...(fams.get(k) || []), p]); }
+  const fam = [...fams.values()].sort((a, b) => b.length - a.length)[0] || [];
+  if (fam.length < 2) return null;
+  const base = plain(fam[0].title.replace(QUOTED, ' ').replace(/\s+[-–]\s+[^-–]{1,20}$/, '').replace(/\s+/g, ' '), 200);
+  const optNames: string[] = fam[0].options.filter((o: string) => !/^title$/i.test(o));
+  const shared = optNames.length > 0 && fam.every((p) => p.options.join('|') === fam[0].options.join('|'));
+  const combos = fam.flatMap((p) => {
+    const label = familyLabel(p.title, base);
+    if (!shared) { const pr = p.variants.map((v: Json) => v.price).filter((x: unknown) => x != null); return [{ values: [label], price: pr.length ? Math.min(...pr) : null, image: p.image, url: `${u.origin}/products/${p.handle}` }]; }
+    return p.variants.map((v: Json) => ({ values: [label, ...v.opts], price: v.price, image: v.image || p.image, url: `${u.origin}/products/${p.handle}?variant=${v.id}` }));
+  });
+  const groups = [{ name: 'Edition', values: combos.map((c) => c.values[0]) }, ...(shared ? optNames.map((n, i) => ({ name: n, values: combos.map((c) => c.values[i + 1]) })) : [])];
+  const v = tidyVariants(groups, combos); if (!v) return null;
+  const prices = combos.map((c) => c.price).filter((x): x is number => x != null);
+  const cur = (/Shopify\.currency\s*=\s*\{\s*"active"\s*:\s*"([A-Z]{3})"/.exec(html) || [])[1] || '';
+  return { base, v, image: fam[0].image, description: descCut(plain(fam.find((p) => p.body)?.body || '', 4000)), price: prices.length ? Math.min(...prices) : null, currency: cur, count: fam.length };
 }
 // Shopify's product address + ".js" gives the product's full data (all versions) even when the page doesn't show it
 async function shopifyJs(pageUrl: string, fetchFn: typeof fetch) {
@@ -686,7 +738,14 @@ export async function readProduct(link: string, cats: string[], key: string, fet
     return { ok: false, blocked: true, error: BLOCKED, guessName: await nameFromLink(link, key, fetchFn) };
   }
   const prod: Json = productFromHtml(html, finalUrl);
-  if (!prod.variants && /cdn\.shopify\.com|Shopify\.shop|shopify-section/i.test(html)) { const sj = await shopifyJs(finalUrl, fetchFn); if (sj) applyVariants(prod, sj); }
+  if (!prod.variants && /cdn\.shopify\.com|Shopify\.shop|shopify-section/i.test(html)) {
+    const fam = await shopifyListing(html, finalUrl, fetchFn);
+    if (fam) {
+      // a page of one product family: the family's name, photo and text (not the shop's banner and slogan)
+      prod.name = fam.base; prod.variants = fam.v; prod.image = fam.image || prod.image; prod.sure = true;
+      prod.description = fam.description || ''; prod.price = fam.price; prod.currency = fam.currency || prod.currency;
+    } else { const sj = await shopifyJs(finalUrl, fetchFn); if (sj) applyVariants(prod, sj); }
+  }
   let how = 'page';
   // not clear from the page itself: the AI reads the page text (says if it's one product or a list, and picks a category)
   if (key && (!prod.sure || !prod.name || prod.price == null || !prod.description || (cats.length && !prod.category))) {
