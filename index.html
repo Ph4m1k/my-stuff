@@ -746,6 +746,8 @@ HOST.importLink = async (url, extra)=>{
   return j;
 };
 // a shop page for the Wishlist: your Supabase reads it (or the page text you copied) and sends back name, price, photo…
+// "Try again": the shop page once more, then the web for this exact item
+HOST.lookHarder = (url, categories, hint)=>HOST.importLink(url || '', { kind: 'deep', categories: (categories || []).slice(0, 60), hint: String(hint || '').slice(0, 200) });
 HOST.readProduct = (url, categories, pageText)=>HOST.importLink(url || '', { kind: 'product', categories: (categories || []).slice(0, 60), ...(pageText ? { pageText: String(pageText).slice(0, 60000) } : {}) });
 // place search: MapTiler, plus Photon (OpenStreetMap), which knows far more places in countries like China
 const PH_SKIP = new Set(['highway', 'railway', 'public_transport', 'boundary', 'route', 'waterway', 'power', 'barrier', 'tunnel', 'bridge']);
@@ -1292,6 +1294,11 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .bought-tag{position:absolute;top:7px;right:7px;padding:2px 8px;border-radius:999px;background:var(--accent);color:var(--card);
     font-family:-apple-system,sans-serif;font-size:0.68rem;font-weight:600;}
   .card.is-bought .thumb img,.card.is-bought .thumb{filter:saturate(.35);}
+  .retry-row{margin:10px 0 4px;display:flex;flex-direction:column;gap:4px;}
+  .retry-btn{align-self:flex-start;border:1px solid var(--accent);background:none;color:var(--accent);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:0.86rem;font-weight:600;padding:7px 12px;border-radius:6px;cursor:pointer;}
+  .retry-btn:hover:not(:disabled){background:color-mix(in srgb, var(--accent) 14%, transparent);}
+  .retry-btn:disabled{opacity:.7;cursor:progress;}
+  .retry-row small{color:var(--muted);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:0.76rem;line-height:1.35;}
   .sort-tag{position:absolute;top:7px;left:7px;padding:2px 8px;border-radius:999px;background:#2f6fdb;color:#fff;font-family:-apple-system,sans-serif;font-size:0.68rem;font-weight:600;}
   .card.is-bought .name{color:var(--muted);}
   .prio{display:inline-block;margin-top:4px;padding:1px 8px;border-radius:999px;font-family:-apple-system,sans-serif;font-size:0.68rem;font-weight:600;}
@@ -4536,6 +4543,48 @@ async function takeShare(){
   else if(got.length) toast(`Saved “${nm}”. I got the ${andList(got)}; the rest is up to you. It’s under “To sort”.`);
   else toast(r && r.blocked ? `Saved the link. That site doesn’t let apps read it, so it’s under “To sort” for you to fill in.` : `Saved the link under “To sort”. I couldn’t read a product from it, so fill it in when you have a moment.`);
 }
+// "Try again": fill in what's missing (a name that's only the shop's address, the price, description, photo, category)
+const lookingHarder = new Set();
+async function lookHarder(id){
+  const w = wishes.find(x=>x.id===id); if(!w || !w.link || lookingHarder.has(id)) return;
+  lookingHarder.add(id);
+  const btn = document.getElementById('retry-' + id);
+  if(btn){ btn.disabled = true; btn.textContent = 'Looking… (this can take up to a minute)'; }
+  let r = null;
+  try{ r = await HOST.lookHarder(w.link, itemCategories, w.name); }catch(e){ r = null; }
+  lookingHarder.delete(id);
+  const again = ()=>{ const b = document.getElementById('retry-' + id); if(b){ b.disabled = false; b.textContent = '✨ Try again: look harder for the details'; } };
+  if(!r || !r.ok || !r.product){ again(); toast((r && r.error) || "Couldn't find more about this item. Try again later, or fill it in yourself."); return; }
+  const p = r.product, upd = {}, got = [];
+  // a name that isn't really a name yet: the shop's address, "TikTok video", or one you haven't checked
+  const placeholder = w.toSort || /^[\w.-]+\.[a-z]{2,}$/i.test(w.name || '') || /^(TikTok video|YouTube video|Instagram post|Facebook post|Shared link)$/.test(w.name || '');
+  if(p.name && placeholder && p.name !== w.name){ upd.name = String(p.name).slice(0, 200); got.push('name'); }
+  const price = Number(p.price);
+  if(!w.price && Number.isFinite(price) && price > 0){
+    const cur = p.currency && CURRENCIES.includes(String(p.currency).toUpperCase()) ? String(p.currency).toUpperCase() : BASE;
+    upd.price = {amount: round2(price), currency: cur}; got.push('price');
+  }
+  const looseDesc = !w.description || (w.shared && w.toSort) || /^sent from .{1,40}:?$/i.test(w.description.trim());
+  if(p.description && looseDesc && p.description !== w.description){ upd.description = String(p.description).slice(0, 300); got.push('description'); }
+  if(p.category && !w.category && itemCategories.includes(p.category)){ upd.category = p.category; got.push('category'); }
+  if(!w.imageUrl){
+    const ph = r.photo;
+    if(ph && ph.b64 && assetsCap){
+      try{
+        const bin = atob(ph.b64), bytes = new Uint8Array(bin.length);
+        for(let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const up = await assetsCap.upload(new File([bytes], 'item.' + ((ph.type || '').split('/')[1] || 'jpg'), {type: ph.type || 'image/jpeg'}));
+        if(up && up.url){ upd.imageId = up.id; upd.imageUrl = up.url; got.push('photo'); }
+      }catch(e){}
+    }
+    if(!upd.imageUrl && r.imageUrl && /^https:\/\//.test(r.imageUrl)){ upd.imageUrl = r.imageUrl; got.push('photo'); }
+  }
+  if((upd.name || w.name) && (upd.price || w.price) && w.toSort) upd.toSort = false;
+  if(!Object.keys(upd).length){ again(); toast('Nothing new found: everything I could find is already filled in.'); return; }
+  try{ await db.collection('wishes').doc(id).update(upd); }catch(e){ again(); toast("Couldn't save what I found. Try again."); return; }
+  toast(got.length ? `✓ Filled in the ${andList(got)}.` : '✓ Updated.');
+  refreshOpenDetail('wishes', id);
+}
 async function wishSorted(id){
   try{ await db.collection('wishes').doc(id).update({toSort: false}); toast('Moved out of “To sort”.'); refreshOpenDetail('wishes', id); }
   catch(e){ toast("Couldn't save that. Try again."); }
@@ -4606,6 +4655,8 @@ function openWishDetail(id){
       : w.toSort ? `<div class="status-box sort-box"><span>📥 You shared this from your phone. Check the details, then tap <b>Edit</b> and save.</span>
            <button type="button" class="link-btn" onclick="wishSorted('${w.id}')">✓ It’s fine as it is</button></div>`
       : needsBox(missingWishInfo(w), `openWishEdit('${w.id}')`)}
+    ${!bought && w.link && (w.toSort || !w.price || !w.imageUrl || !w.description) ? `<div class="retry-row"><button type="button" class="retry-btn" id="retry-${w.id}" onclick="lookHarder('${w.id}')">✨ Try again: look harder for the details</button>
+      <small>Reads the shop page again and, if the shop blocks it, searches the web for this exact item. Fills in only what’s missing.</small></div>` : ''}
     <div class="desc">${esc(w.description||'No description.')}</div>
     <div class="detail-meta"><div>Date added<b>${itemDate(w)?fmtDate(itemDate(w)):'—'}</b></div></div>
     ${linkedNotesHTML('wishes', w.id)}

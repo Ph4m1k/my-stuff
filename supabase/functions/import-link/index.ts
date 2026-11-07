@@ -696,6 +696,50 @@ export async function toEnglish(name: string, desc: string, key: string, fetchFn
   } catch (_) { /* keep the shop's words */ }
   return en || d !== desc ? { name: en || name, description: d, how: how || 'kept', note: searchNote } : null;
 }
+// "Try again": the shop page once more, then the web for this exact item (name, price, description, picture)
+export async function lookHarder(link: string, hint: string, cats: string[], key: string, fetchFn: typeof fetch) {
+  if (!link) return { ok: false, error: 'This item has no link to look up.' };
+  let r: Json = null;
+  try { r = await readProduct(link, cats, key, fetchFn); } catch (_) { r = null; }
+  const p: Json = (r && r.ok && !r.list && r.product) || {};
+  let how = r && r.ok ? 'page' : '';
+  let image = '';
+  if (key && (!p.name || p.price == null || !p.description || !(r && r.photo))) {
+    const fromLink = slugOf(link);
+    const o = await askJson(key, fetchFn,
+      `Find this exact product on the web and tell me about it.\nLink: ${link}${hint ? `\nIt may be called: ${hint}` : ''}${fromLink ? `\nThe link's words: ${fromLink}` : ''}${p.name ? `\nThe shop calls it: ${p.name}` : ''}\n` +
+      `It must be the same item: same model, size, colour or edition. For the price, prefer the shop from the link; otherwise the usual price in Czech shops. The product may be newer than you know about: just search, don't comment.\n` +
+      `Reply with only JSON: {"found":true,"name":"the official English name","price":12345,"currency":"CZK","description":"one or two plain sentences about it","image":"a direct https link to a photo of it, or empty","category":"${cats.length ? 'one of: ' + cats.join(', ') + ', or empty' : 'empty'}"} or {"found":false}`,
+      [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }], 1500);
+    if (o && o.found) {
+      const n = plain(o.name, 200);
+      // the same item as the link or the page says (its numbers, like 2TB or 126234, have to be there)
+      const must = nums(p.name || titleWords(fromLink) || '').split(',').filter(Boolean);
+      const ok = n && !/cannot|not a real|unknown/i.test(n) && must.every((x) => (n.match(/\d+/g) || []).includes(x));
+      if (ok) {
+        if (!p.name) p.name = n;
+        if (p.price == null && Number(o.price) > 0) { p.price = Math.round(Number(o.price) * 100) / 100; p.currency = String(o.currency || 'CZK').toUpperCase(); }
+        if (!p.description && o.description) p.description = plain(o.description, 300);
+        if (!p.category && o.category && cats.includes(o.category)) p.category = o.category;
+        if (/^https:\/\/\S+$/.test(String(o.image || ''))) image = String(o.image);
+        how = how ? how + '+web' : 'web';
+      }
+    }
+  }
+  if (!p.name && r && r.guessName) { p.name = r.guessName; how = how || 'link'; }
+  if (!p.name) return { ok: false, error: "Couldn't find this item, even on the web. Fill it in yourself, or share it again from the shop's page." };
+  let photo: Json = r && r.ok ? r.photo : null;
+  if (!photo && image && !privateHost(image)) {
+    try {
+      const ir = await withTimeout(fetchFn, 12000)(image, { headers: { 'User-Agent': UA, Accept: 'image/*' } });
+      const type = ir.headers.get('content-type') || '';
+      if (ir.ok && /^image\//.test(type)) { const b = new Uint8Array(await ir.arrayBuffer()); if (b.length > 1500 && b.length < 6_000_000) { let bin = ''; for (let i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]); photo = { type, b64: btoa(bin) }; } }
+    } catch (_) { /* keep the address below */ }
+  }
+  const en = await toEnglish(p.name, p.description || '', key, fetchFn);
+  if (en) { p.name = en.name; p.description = en.description; }
+  return { ok: true, how, product: { name: p.name, price: p.price ?? null, currency: p.currency || '', description: p.description || '', category: p.category || '' }, photo, imageUrl: photo ? '' : (image || (r && r.imageUrl) || '') };
+}
 export async function shareToWishlist(db: Json, uid: string, raw: string, title: string, key: string, fetchFn: typeof fetch, phone = '') {
   const u0 = ((/https?:\/\/[^\s"'<>]+/.exec(raw) || [])[0] || '').replace(/[),.;!?]+$/, '');
   const link = u0 ? cleanLink(u0) : '';
@@ -819,6 +863,11 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
     let title = '', phone = ''; try { const j = JSON.parse(raw); title = String(j.title || '').replace(/\s+/g, ' ').trim().slice(0, 200); text = [j.url, j.text].filter(Boolean).map(String).join(' ') || text; phone = typeof j.page === 'string' ? j.page : ''; } catch (_) { /* plain text */ }
     try { const r = await shareToWishlist(db, uid, String(text || ''), title, env.get('ANTHROPIC_API_KEY') || '', fetchFn, phone); return say(r.message, r.ok ? 200 : 400); }
     catch (_) { return say('Not saved: something went wrong. Try sharing it again.', 500); }
+  }
+  if (kind === 'deep') {
+    let hint = ''; try { hint = String(JSON.parse(raw).hint || '').slice(0, 200); } catch (_) { /* none */ }
+    const l = (/https?:\/\/[^\s"'<>]+/.exec(String(text)) || [])[0] || '';
+    return reply(await lookHarder(l, hint, cats, env.get('ANTHROPIC_API_KEY') || '', fetchFn));
   }
   if (kind === 'traffic') { let pts: unknown = null; try { pts = JSON.parse(raw).points; } catch (_) { /* below */ } return reply(await carTraffic(pts, env.get('TOMTOM_KEY') || '', fetchFn)); }
   const link = (/https?:\/\/[^\s"'<>]+/.exec(String(kind === 'product' ? (pasted ? safeUrl : text) : text)) || [])[0] || '';
