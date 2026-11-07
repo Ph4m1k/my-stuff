@@ -4457,6 +4457,7 @@ function openWishForm(w){
   updateLinkOpen();
   document.getElementById('w_name').value = w ? (w.name||'') : '';
   document.getElementById('w_desc').value = w ? (w.description||'') : '';
+  requestAnimationFrame(()=>fitBox(document.getElementById('w_desc')));
   document.getElementById('w_prio').value = w && PRIO[w.priority] ? w.priority : '';
   setPickerValue('wcat', w ? (w.category||'') : '');
   wishPhoto.show(w && w.imageUrl ? w.imageUrl : null);
@@ -4504,7 +4505,7 @@ async function takeShare(){
   const dup = link && wishes.find(w=>cleanLink(normalizeLink(w.link || ''))===link);
   if(dup){ shareBusy = false; toast(`That’s already in your wishlist: “${dup.name}”.`); openWishDetail(dup.id); return; }
   const name = shareName(s, link);
-  const data = {name, addedDate: todayIso(), link, description: s.text && s.text !== name ? s.text.slice(0, 300) : '', category: '', priority: '',
+  const data = {name, addedDate: todayIso(), link, description: s.text && s.text !== name ? descCut(s.text) : '', category: '', priority: '',
                 price: null, priceTotal: null, createdAt: new Date().toISOString(), bought: false, toSort: true, shared: true};
   let ref = null;
   try{ ref = await db.collection('wishes').add(data); }catch(e){}
@@ -4518,7 +4519,7 @@ async function takeShare(){
   const p = r && r.ok && !r.list && r.product;
   if(p){
     if(p.name){ upd.name = String(p.name).slice(0, 200); got.push('name'); }
-    if(p.description){ upd.description = String(p.description).slice(0, 300); got.push('description'); }
+    if(p.description){ upd.description = descCut(p.description); got.push('description'); }
     if(p.category && itemCategories.includes(p.category)){ upd.category = p.category; got.push('category'); }
     const price = Number(p.price);
     if(Number.isFinite(price) && price > 0){
@@ -4543,6 +4544,15 @@ async function takeShare(){
   else if(got.length) toast(`Saved “${nm}”. I got the ${andList(got)}; the rest is up to you. It’s under “To sort”.`);
   else toast(r && r.blocked ? `Saved the link. That site doesn’t let apps read it, so it’s under “To sort” for you to fill in.` : `Saved the link under “To sort”. I couldn’t read a product from it, so fill it in when you have a moment.`);
 }
+// descriptions: up to ~600 characters, ending at the end of a sentence (never cut mid-word)
+function descCut(v, max = 600){
+  const t = String(v || '').replace(/\s+/g, ' ').trim(); if(t.length <= max) return t;
+  const c = t.slice(0, max), i = Math.max(c.lastIndexOf('. '), c.lastIndexOf('! '), c.lastIndexOf('? '));
+  return i > max * 0.4 ? c.slice(0, i + 1) : c.replace(/\s+\S*$/, '') + '…';
+}
+// the description box grows with its text, so nothing hides below the edge
+function fitBox(el){ if(!el) return; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight + 2, Math.round(innerHeight * 0.5)) + 'px'; }
+document.addEventListener('input', e=>{ if(e.target && e.target.id==='w_desc') fitBox(e.target); });
 // "Try again": fill in what's missing (a name that's only the shop's address, the price, description, photo, category)
 const lookingHarder = new Set();
 async function lookHarder(id){
@@ -4565,7 +4575,7 @@ async function lookHarder(id){
     upd.price = {amount: round2(price), currency: cur}; got.push('price');
   }
   const looseDesc = !w.description || (w.shared && w.toSort) || /^sent from .{1,40}:?$/i.test(w.description.trim());
-  if(p.description && looseDesc && p.description !== w.description){ upd.description = String(p.description).slice(0, 300); got.push('description'); }
+  if(p.description && looseDesc && p.description !== w.description){ upd.description = descCut(p.description); got.push('description'); }
   if(p.category && !w.category && itemCategories.includes(p.category)){ upd.category = p.category; got.push('category'); }
   if(!w.imageUrl){
     const ph = r.photo;
@@ -4781,7 +4791,7 @@ ${txt.slice(0, 40000)}
     const filled = [];
     const flash = el=>{ el.classList.remove('just-filled'); void el.offsetWidth; el.classList.add('just-filled'); };
     if(r && typeof r.name==='string' && r.name.trim()){ const el=document.getElementById('w_name'); el.value=r.name.trim(); flash(el); filled.push('name'); }
-    if(r && typeof r.description==='string' && r.description.trim()){ const el=document.getElementById('w_desc'); el.value=r.description.trim(); flash(el); filled.push('description'); }
+    if(r && typeof r.description==='string' && r.description.trim()){ const el=document.getElementById('w_desc'); el.value=r.description.trim(); fitBox(el); flash(el); filled.push('description'); }
     if(r && typeof r.category==='string' && itemCategories.includes(r.category)){ setPickerValue('wcat', r.category); flash(document.getElementById('w_cat')); filled.push('category'); }
     const price = r ? Number(r.price) : NaN;
     if(Number.isFinite(price) && price>0){
@@ -4819,6 +4829,7 @@ function applyProduct(p, photo, onlyEmpty){
   const put = (id, v, label)=>{ const el = document.getElementById(id); if(!v || (onlyEmpty && el.value.trim())) return; el.value = v; flash(el); filled.push(label); };
   put('w_name', p && p.name, 'name');
   put('w_desc', p && p.description, 'description');
+  fitBox(document.getElementById('w_desc'));
   if(p && p.category && itemCategories.includes(p.category) && !(onlyEmpty && pickerValue('wcat'))){ setPickerValue('wcat', p.category); flash(document.getElementById('w_cat')); filled.push('category'); }
   const price = p ? Number(p.price) : NaN, row = document.querySelector('#wPriceRow .cost-row');
   if(row && Number.isFinite(price) && price > 0){

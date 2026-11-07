@@ -383,6 +383,12 @@ function toPrice(v: unknown): number | null {
 const decode = (s: string) => s.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   .replace(/&nbsp;/g, ' ').replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(+n)).replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)));
 const plain = (s: unknown, max = 400) => decode(String(s || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, max);
+// descriptions: up to ~600 characters, ending at the end of a sentence (never cut mid-word)
+const descCut = (s: unknown, max = 600) => {
+  const t = plain(s, 4000); if (t.length <= max) return t;
+  const c = t.slice(0, max), i = Math.max(c.lastIndexOf('. '), c.lastIndexOf('! '), c.lastIndexOf('? '));
+  return i > max * 0.4 ? c.slice(0, i + 1) : c.replace(/\s+\S*$/, '') + '…';
+};
 function shortDesc(s: string) {
   const t = plain(s, 600); if (!t) return '';
   const parts = t.split(/(?<=[.!?])\s+/); let out = '';
@@ -524,7 +530,7 @@ async function productFromText(text: string, link: string, cats: string[], key: 
   if (!key) return { ok: false, error: 'The AI key is missing in Supabase.' };
   try {
     const a = await askClaudeProduct(text, link || 'not given', cats, key, fetchFn);
-    const product = { name: plain(a.name, 200), price: toPrice(a.price), currency: curCode(a.currency), description: plain(a.description, 300), brand: '', shop: link ? hostOf(link).replace(/^www\./, '') : '', category: cats.includes(a.category) ? a.category : '' };
+    const product = { name: plain(a.name, 200), price: toPrice(a.price), currency: curCode(a.currency), description: descCut(a.description), brand: '', shop: link ? hostOf(link).replace(/^www\./, '') : '', category: cats.includes(a.category) ? a.category : '' };
     if (!product.name && product.price == null) return { ok: false, error: "Couldn't find product details in that text. Make sure you copied the product page." };
     return { ok: true, how: 'text', url: link, product, photo: null };
   } catch (_) { return { ok: false, error: "That didn't work. Try again in a moment." }; }
@@ -593,7 +599,7 @@ export async function readProduct(link: string, cats: string[], key: string, fet
       if (!prod.sure && toPrice(a.price) != null) { prod.price = toPrice(a.price); prod.currency = curCode(a.currency); }
       if (!prod.name && a.name) prod.name = plain(a.name, 200);
       if (prod.price == null && toPrice(a.price) != null) { prod.price = toPrice(a.price); prod.currency = curCode(a.currency); }
-      if (!prod.description && a.description) prod.description = plain(a.description, 300);
+      if (!prod.description && a.description) prod.description = descCut(a.description);
       if (a.category && cats.includes(a.category)) prod.category = a.category;
       how = 'ai';
     } catch (_) { /* keep what the page gave */ }
@@ -689,7 +695,7 @@ export async function toEnglish(name: string, desc: string, key: string, fetchFn
     const o = await askJson(key, fetchFn,
       `Translate this shop's product name and description into natural English.\n- Keep brand names, product and model names, numbers and sizes exactly as written.\n- Translate every Czech word, including colours and adjectives (e.g. "burgundská červená" or "burgundsky červená" → "Burgundy Red", "ledovcově modrá" → "Glacier Blue", "černá" → "Black").\n- Write colour and edition names in Title Case, the way the maker would.\n- If a part is already English, leave it. The product may be newer than you know: never comment on it.\nReply with only JSON: {"name":"...","description":"..."}\nName: ${name}\nDescription: ${desc || '(none)'}`);
     if (o) {
-      const n = plain(o.name, 200), dd = plain(o.description, 300);
+      const n = plain(o.name, 200), dd = descCut(o.description);
       if (!en && sameItem(n, name)) { en = n; how = 'translated'; }
       if (desc && dd && !/^\(none\)$/i.test(dd)) d = dd;
     }
@@ -719,7 +725,7 @@ export async function lookHarder(link: string, hint: string, cats: string[], key
       if (ok) {
         if (!p.name) p.name = n;
         if (p.price == null && Number(o.price) > 0) { p.price = Math.round(Number(o.price) * 100) / 100; p.currency = String(o.currency || 'CZK').toUpperCase(); }
-        if (!p.description && o.description) p.description = plain(o.description, 300);
+        if (!p.description && o.description) p.description = descCut(o.description);
         if (!p.category && o.category && cats.includes(o.category)) p.category = o.category;
         if (/^https:\/\/\S+$/.test(String(o.image || ''))) image = String(o.image);
         how = how ? how + '+web' : 'web';
@@ -743,7 +749,7 @@ export async function lookHarder(link: string, hint: string, cats: string[], key
 export async function shareToWishlist(db: Json, uid: string, raw: string, title: string, key: string, fetchFn: typeof fetch, phone = '') {
   const u0 = ((/https?:\/\/[^\s"'<>]+/.exec(raw) || [])[0] || '').replace(/[),.;!?]+$/, '');
   const link = u0 ? cleanLink(u0) : '';
-  const extra = raw.replace(u0, '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  const extra = descCut(raw.replace(u0, ''));
   if (!link && !extra && !title) return { ok: false, message: 'Nothing to save: share a link or some text.' };
   if (link) {
     const dup = await db.findBy(uid, 'wishes', 'link', link);
@@ -763,7 +769,7 @@ export async function shareToWishlist(db: Json, uid: string, raw: string, title:
   const p = r && r.ok && !r.list && r.product;
   if (p) {
     if (p.name) { data.name = String(p.name).slice(0, 200); got.push('name'); }
-    if (p.description) { data.description = String(p.description).slice(0, 300); got.push('description'); }
+    if (p.description) { data.description = descCut(p.description); got.push('description'); }
     if (p.category && cats.includes(p.category)) { data.category = p.category; got.push('category'); }
     if (p.price != null && p.price > 0) { const cur = WISH_CURS.includes(p.currency) ? p.currency : 'CZK'; data.price = { amount: Math.round(p.price * 100) / 100, currency: cur }; got.push('price'); }
   } else if (r && r.guessName) { data.name = r.guessName; got.push('name (from the link)'); }
