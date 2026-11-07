@@ -1304,6 +1304,10 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .ver-chip.on{background:var(--accent);border-color:var(--accent);color:var(--paper);}
   .ver-chip.on small{color:inherit;opacity:.85;}
   .choice-line{font-size:0.74rem;color:var(--muted);margin:-1px 0 3px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
+  .read-btn{margin-top:6px;border:1px solid var(--accent);background:none;color:var(--accent);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:0.84rem;font-weight:600;padding:6px 12px;border-radius:6px;cursor:pointer;}
+  .read-btn:hover:not(:disabled){background:color-mix(in srgb, var(--accent) 14%, transparent);}
+  .read-btn:disabled{opacity:.4;cursor:default;}
+  .from{font-size:0.8em;font-weight:400;opacity:.8;}
   .retry-row{margin:10px 0 4px;display:flex;flex-direction:column;gap:4px;}
   .retry-btn{align-self:flex-start;border:1px solid var(--accent);background:none;color:var(--accent);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:0.86rem;font-weight:600;padding:7px 12px;border-radius:6px;cursor:pointer;}
   .retry-btn:hover:not(:disabled){background:color-mix(in srgb, var(--accent) 14%, transparent);}
@@ -2489,6 +2493,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
         <input id="w_link" type="url" inputmode="url" placeholder="https://…" autocomplete="off">
         <a class="link-open" id="w_linkOpen" target="_blank" rel="noopener noreferrer" title="Open shop page" aria-label="Open shop page"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4h5v5M16 4l-7 7M14 11.5V16H4V6h4.5"/></svg></a>
       </div>
+      <button type="button" class="read-btn" id="w_readBtn" disabled>🔎 Fill in from this link</button>
       <div class="fill-status read-status" id="w_readStatus" aria-live="polite"></div>
       <button type="button" class="link-btn fill-toggle" id="w_fillToggle">Fill in the details from the shop page</button>
       <div class="fill-panel" id="w_fillPanel">
@@ -3302,7 +3307,11 @@ function wishKc(w){
 function wishPriceHTML(w, cls){
   const p = wishPrice(w); if(!p) return '';
   const kc = p.currency!==BASE ? wishKc(w) : null;
-  return `<div class="${cls}">${money(p.amount, p.currency)}${kc!=null ? `<small>≈ ${money(kc)}</small>` : ''}</div>`;
+  // versions with different prices, not all picked yet: the price is the cheapest one, so say "from"
+  const v = w.variants, ch = Array.isArray(w.choice) ? w.choice : [];
+  const prices = v && Array.isArray(v.combos) ? [...new Set(v.combos.map(c=>c.price).filter(x=>x != null))] : [];
+  const from = prices.length > 1 && !(v.groups || []).every((_, i)=>ch[i]);
+  return `<div class="${cls}">${from ? '<span class="from">from </span>' : ''}${money(p.amount, p.currency)}${kc!=null ? `<small>≈ ${money(kc)}</small>` : ''}</div>`;
 }
 
 // ---------- What's missing on an item / wish ("Needs info") ----------
@@ -4467,6 +4476,7 @@ function openWishForm(w){
   editingWishId = w ? w.id : null;
   document.getElementById('wishFormTitle').textContent = w ? 'Edit wishlist item' : 'Add to wishlist';
   document.getElementById('w_link').value = w ? (w.link||'') : '';
+  document.getElementById('w_readBtn').disabled = !(w && w.link);
   updateLinkOpen();
   document.getElementById('w_name').value = w ? (w.name||'') : '';
   document.getElementById('w_desc').value = w ? (w.description||'') : '';
@@ -4934,10 +4944,15 @@ async function readShopLink(){
 }
 function setupWishForm(){
   const link = document.getElementById('w_link');
-  link.addEventListener('input', updateLinkOpen);
-  link.addEventListener('blur', ()=>{ if(link.value.trim()) link.value = normalizeLink(link.value); updateLinkOpen(); readShopLink(); });
-  link.addEventListener('paste', ()=>setTimeout(()=>{ updateLinkOpen(); readShopLink(); }, 0));      // paste a link: it reads the page straight away
-  link.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); readShopLink(); } });
+  // the page is only read when you ask (the button, or Enter): a wrong paste does nothing
+  const readBtn = document.getElementById('w_readBtn');
+  const canRead = ()=>{ readBtn.disabled = !/^\S+\.\S+/.test(link.value.trim()); };
+  link.addEventListener('input', ()=>{ updateLinkOpen(); canRead(); });
+  link.addEventListener('paste', ()=>setTimeout(()=>{ updateLinkOpen(); canRead(); }, 0));
+  link.addEventListener('blur', ()=>{ if(link.value.trim()) link.value = normalizeLink(link.value); updateLinkOpen(); canRead(); });
+  const readNow = ()=>{ if(link.value.trim()) link.value = normalizeLink(link.value); updateLinkOpen(); lastReadLink = ''; readShopLink(); };
+  link.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); readNow(); } });
+  readBtn.addEventListener('click', readNow);
   document.getElementById('w_fillToggle').addEventListener('click', ()=>{
     const panel = document.getElementById('w_fillPanel'); panel.classList.toggle('open');
     if(panel.classList.contains('open')) document.getElementById('w_fillText').focus();
