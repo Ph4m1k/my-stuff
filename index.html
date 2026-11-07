@@ -1294,6 +1294,16 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .bought-tag{position:absolute;top:7px;right:7px;padding:2px 8px;border-radius:999px;background:var(--accent);color:var(--card);
     font-family:-apple-system,sans-serif;font-size:0.68rem;font-weight:600;}
   .card.is-bought .thumb img,.card.is-bought .thumb{filter:saturate(.35);}
+  .versions{margin:6px 0 10px;display:flex;flex-direction:column;gap:8px;}
+  .ver-label{font-size:0.78rem;font-weight:600;color:var(--muted);margin-bottom:4px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
+  .ver-label span{font-weight:400;}
+  .ver-chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .ver-chip{border:1px solid var(--line);background:none;color:var(--ink);border-radius:999px;padding:5px 11px;cursor:pointer;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:0.82rem;}
+  .ver-chip small{color:var(--muted);margin-left:3px;}
+  .ver-chip:hover{border-color:var(--accent);}
+  .ver-chip.on{background:var(--accent);border-color:var(--accent);color:var(--paper);}
+  .ver-chip.on small{color:inherit;opacity:.85;}
+  .choice-line{font-size:0.74rem;color:var(--muted);margin:-1px 0 3px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
   .retry-row{margin:10px 0 4px;display:flex;flex-direction:column;gap:4px;}
   .retry-btn{align-self:flex-start;border:1px solid var(--accent);background:none;color:var(--accent);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:0.86rem;font-weight:600;padding:7px 12px;border-radius:6px;cursor:pointer;}
   .retry-btn:hover:not(:disabled){background:color-mix(in srgb, var(--accent) 14%, transparent);}
@@ -3370,6 +3380,7 @@ function wishCard(w){
       <div class="card-body">
         <div class="cat">${esc(w.category||'uncategorized')}</div>
         <div class="name">${esc(w.name||'Untitled')}</div>
+        ${choiceText(w) ? `<div class="choice-line">${esc(choiceText(w))}</div>` : ''}
         ${w.bought?'':prioTag(w.priority)}
         ${wishPriceHTML(w,'price')}
       </div>
@@ -4449,8 +4460,10 @@ function wishPriceFromForm(){
   const amount = parseFloat(row.querySelector('.camount').value);
   return amount>0 ? {amount: round2(amount), currency: row.querySelector('.ccur').value} : null;
 }
+let formVariants = null;   // versions read from the link while the form is open (kept when you save)
 function openWishForm(w){
   closeCatPage(); closeFormManagers(); closeDetail();
+  formVariants = null;
   editingWishId = w ? w.id : null;
   document.getElementById('wishFormTitle').textContent = w ? 'Edit wishlist item' : 'Add to wishlist';
   document.getElementById('w_link').value = w ? (w.link||'') : '';
@@ -4527,6 +4540,7 @@ async function takeShare(){
       upd.price = {amount: round2(price), currency: cur}; got.push('price');
     }
     if(r.url && cleanLink(r.url) !== link && !/tiktok|youtu|instagram|facebook/.test(hostOf(r.url))) upd.link = cleanLink(normalizeLink(r.url));
+    if(p.variants && p.variants.groups && p.variants.groups.length){ upd.variants = p.variants; if(p.selected) upd.choice = p.selected; got.push('versions'); }
   }else if(r && r.guessName){ upd.name = String(r.guessName).slice(0, 200); got.push('name (from the link)'); }
   const ph = r && r.ok && r.photo;
   if(ph && ph.b64 && assetsCap){
@@ -4543,6 +4557,31 @@ async function takeShare(){
   if(upd.toSort===false) toast(`✓ Added “${nm}” to your wishlist (${andList(got)}).`);
   else if(got.length) toast(`Saved “${nm}”. I got the ${andList(got)}; the rest is up to you. It’s under “To sort”.`);
   else toast(r && r.blocked ? `Saved the link. That site doesn’t let apps read it, so it’s under “To sort” for you to fill in.` : `Saved the link under “To sort”. I couldn’t read a product from it, so fill it in when you have a moment.`);
+}
+// ---------- versions (finish, size, colour…): the item has a general name, you pick the version you want ----------
+function choiceText(w){ return Array.isArray(w.choice) ? w.choice.filter(Boolean).join(' · ') : ''; }
+function versionsHTML(w){
+  const v = w.variants; if(!v || !Array.isArray(v.groups) || !v.groups.length) return '';
+  const ch = Array.isArray(w.choice) ? w.choice : [];
+  return `<div class="versions">${v.groups.map((g, gi)=>`<div class="ver-group"><div class="ver-label">${esc(g.name || 'Version')}${ch[gi] ? '' : ' <span>· pick one</span>'}</div>
+    <div class="ver-chips">${(g.values || []).map(val=>{
+      const c = (v.combos || []).find(x=>x.values && x.values[gi]===val && (v.groups.length===1 || v.groups.every((_, k)=>k===gi || !ch[k] || x.values[k]===ch[k])));
+      const pr = c && c.price != null && v.groups.length===1 ? ` <small>${esc(fmtShort(c.price, w.price && w.price.currency))}</small>` : '';
+      return `<button type="button" class="ver-chip${ch[gi]===val ? ' on' : ''}" aria-pressed="${ch[gi]===val}" onclick="pickVersion('${w.id}', ${gi}, ${esc(JSON.stringify(val))})">${esc(val)}${pr}</button>`; }).join('')}</div></div>`).join('')}</div>`;
+}
+function fmtShort(n, cur){ try{ return new Intl.NumberFormat('cs-CZ', {style: 'currency', currency: cur || BASE, maximumFractionDigits: n % 1 ? 2 : 0}).format(n); }catch(e){ return String(n); } }
+async function pickVersion(id, gi, val){
+  const w = wishes.find(x=>x.id===id); if(!w || !w.variants) return;
+  const v = w.variants, ch = (Array.isArray(w.choice) ? w.choice.slice() : []);
+  while(ch.length < v.groups.length) ch.push('');
+  ch[gi] = ch[gi]===val ? '' : val;                                 // tap the chosen one again to un-pick it
+  const upd = {choice: ch.some(Boolean) ? ch : null};
+  // every group picked: that version's price and photo
+  const c = ch.every(Boolean) && (v.combos || []).find(x=>x.values && x.values.every((y, k)=>y===ch[k]));
+  if(c && c.price != null) upd.price = {amount: c.price, currency: (w.price && w.price.currency) || BASE};
+  if(c && c.image && /^https:\/\//.test(c.image)) upd.imageUrl = c.image;
+  try{ await db.collection('wishes').doc(id).update(upd); }catch(e){ toast("Couldn't save your choice. Try again."); return; }
+  refreshOpenDetail('wishes', id);
 }
 // descriptions: up to ~600 characters, ending at the end of a sentence (never cut mid-word)
 function descCut(v, max = 600){
@@ -4579,6 +4618,7 @@ async function lookHarder(id){
   const looseDesc = !w.description || (w.shared && w.toSort) || /^sent from .{1,40}:?$/i.test(w.description.trim()) || descLooksCut(w.description);
   if(p.description && looseDesc && p.description !== w.description){ upd.description = descCut(p.description); got.push('description'); }
   if(p.category && !w.category && itemCategories.includes(p.category)){ upd.category = p.category; got.push('category'); }
+  if(p.variants && p.variants.groups && p.variants.groups.length && !w.variants){ upd.variants = p.variants; if(p.selected && !w.choice) upd.choice = p.selected; got.push('versions'); }
   if(!w.imageUrl){
     const ph = r.photo;
     if(ph && ph.b64 && assetsCap){
@@ -4622,6 +4662,7 @@ async function saveWish(){
     price,
     priceTotal: null,
     toSort: false,
+    ...(formVariants ? {variants: formVariants.variants, choice: formVariants.choice} : {}),
   };
   if(data.category && !itemCategories.includes(data.category)){ itemCategories.push(data.category); refreshPickerSelect('item'); rememberList('item'); }
   const btn = document.querySelector('#wishOverlay .save'); btn.disabled = true;
@@ -4659,6 +4700,7 @@ function openWishDetail(id){
     <h2 style="margin-top:4px;margin-bottom:4px;">${esc(w.name||'Untitled')}</h2>
     ${bought ? '' : prioTag(w.priority)}
     ${wishPriceHTML(w,'price-line')}
+    ${versionsHTML(w)}
     ${href ? `<a class="detail-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4h5v5M16 4l-7 7M14 11.5V16H4V6h4.5"/></svg><span>Open shop page</span></a>` : ''}
     ${bought
       ? `<div class="status-box"><span>✓ Bought${w.boughtDate?` on ${fmtDate(w.boughtDate)}`:''}.</span>
@@ -4827,6 +4869,7 @@ function setReadStatus(text, kind, busy){
 const andList = a=>a.join(', ').replace(/, ([^,]*)$/, ' and $1');
 // put a product's details into the form; onlyEmpty: leave alone anything you've already filled in
 function applyProduct(p, photo, onlyEmpty){
+  if(p && p.variants && p.variants.groups && p.variants.groups.length) formVariants = {variants: p.variants, choice: p.selected || null};
   const filled = [], flash = el=>{ el.classList.remove('just-filled'); void el.offsetWidth; el.classList.add('just-filled'); };
   const put = (id, v, label)=>{ const el = document.getElementById(id); if(!v || (onlyEmpty && el.value.trim())) return; el.value = v; flash(el); filled.push(label); };
   put('w_name', p && p.name, 'name');

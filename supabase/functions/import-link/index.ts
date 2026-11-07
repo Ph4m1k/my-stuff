@@ -399,6 +399,87 @@ function privateHost(u: string) {
   const h = hostOf(u).toLowerCase();
   return !h || h === 'localhost' || h.endsWith('.local') || h.endsWith('.internal') || /^(127\.|10\.|192\.168\.|169\.254\.|0\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h) || h === '[::1]' || /^\[?(fc|fd|fe80)/i.test(h);
 }
+// ---------- versions of one product (finish, size, colour…): the item keeps a general name, you pick a version ----------
+// variants: groups like {name:'Finish', values:[…]}, and combos (one per version the shop sells) with its price and photo
+export type Variants = { groups: { name: string; values: string[] }[]; combos: { values: string[]; price: number | null; image: string }[] };
+const uniq = (a: string[]) => [...new Set(a.filter(Boolean))];
+function tidyVariants(groups: { name: string; values: string[] }[], combos: Variants['combos']): Variants | null {
+  // only groups where there's really a choice (2+ values); combos keep just those groups' values
+  const keep = groups.map((g, i) => ({ g, i })).filter(({ g }) => uniq(g.values).length >= 2 && uniq(g.values).length <= 40);
+  if (!keep.length) return null;
+  const cs = combos.map((c) => ({ values: keep.map(({ i }) => plain(c.values[i], 80)), price: c.price, image: c.image })).filter((c) => c.values.every(Boolean)).slice(0, 120);
+  return { groups: keep.map(({ g }) => ({ name: plain(g.name, 40) || 'Option', values: uniq(g.values.map((v) => plain(v, 80))) })), combos: cs };
+}
+// Shopify shops: the product's own data (title, options, every version with price in cents and its photo)
+function shopifyVariants(pr: Json, pageUrl: string) {
+  if (!pr || !Array.isArray(pr.variants) || !pr.variants.length) return null;
+  const abs = (u: unknown) => { try { return u ? new URL(String(u), pageUrl).href : ''; } catch { return ''; } };
+  const src = (x: Json) => !x ? '' : typeof x === 'string' ? x : x.src || x.url || '';
+  let names: string[] = Array.isArray(pr.options) ? pr.options.map((o: Json) => typeof o === 'string' ? o : o && o.name).filter(Boolean) : [];
+  if (!names.length) names = ['Option'];
+  const money = (v: unknown) => typeof v === 'number' ? Math.round(v) / 100 : toPrice(v);
+  const combos = pr.variants.map((v: Json) => ({
+    values: names.map((_, i) => String(v['option' + (i + 1)] ?? (i === 0 ? (v.public_title || v.title || '') : '') ?? '')),
+    price: money(v.price), image: abs(src(v.featured_image) || src(v.image)), id: String(v.id || ''),
+  })).filter((c: Json) => !c.values.every((x: string) => !x || /^default title$/i.test(x)));
+  const t = tidyVariants(names.map((n, i) => ({ name: n, values: combos.map((c: Json) => c.values[i]) })), combos);
+  let selected: string[] | null = null;
+  try {
+    const want = new URL(pageUrl).searchParams.get('variant');
+    const hit = want && combos.find((c: Json) => c.id === want);
+    if (hit && t) { const idx = names.map((n, i) => i).filter((i) => t.groups.some((g) => g.name === plain(names[i], 40) && g.values.includes(plain(hit.values[i], 80)))); selected = idx.map((i) => plain(hit.values[i], 80)); }
+  } catch (_) { /* no version in the link */ }
+  const imgs = Array.isArray(pr.images) ? pr.images : [];
+  return { v: t, base: plain(pr.title, 200), image: abs(src(pr.featured_image) || src(imgs[0])), selected };
+}
+export function variantsFromHtml(html: string, pageUrl: string, ld: Json[] = []) {
+  // a) Shopify: the product's data is written into the page
+  for (const m of html.matchAll(/<script[^>]*type=["']application\/(?:json|ld\+json)["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    if (!/"variants"\s*:/.test(m[1])) continue;
+    try {
+      const j = JSON.parse(m[1].trim()); const pr = j && (j.variants ? j : j.product);
+      const r = shopifyVariants(pr, pageUrl); if (r && r.v) return r;
+    } catch (_) { /* not that one */ }
+  }
+  const meta = /var\s+meta\s*=\s*(\{[\s\S]*?\});\s*\n/.exec(html);
+  if (meta) { try { const r = shopifyVariants(JSON.parse(meta[1]).product, pageUrl); if (r && r.v) return r; } catch (_) { /* skip */ } }
+  // b) structured data: a product group with its variants, or one product with several named offers
+  const abs = (u: unknown) => { try { return u ? new URL(String(u), pageUrl).href : ''; } catch { return ''; } };
+  const imgOf = (v: Json): string => !v ? '' : typeof v === 'string' ? v : Array.isArray(v) ? imgOf(v[0]) : (v.url || v.contentUrl || '');
+  const priceOf = (o: Json) => { const x = [].concat(o || [])[0] as Json; return x ? toPrice(x.price ?? x.lowPrice) : null; };
+  for (const p of ld) {
+    const vs: Json[] = Array.isArray(p.hasVariant) ? p.hasVariant : [];
+    if (vs.length >= 2) {
+      const by = ([] as string[]).concat(p.variesBy || []).map((x) => String(x).split(/[/#]/).pop() || '').filter((x) => /^(color|colour|size|material|pattern|suggestedAge|suggestedGender)$/i.test(x));
+      const base = plain(p.name, 200);
+      const label: Record<string, string> = { color: 'Colour', colour: 'Colour', size: 'Size', material: 'Material', pattern: 'Pattern' };
+      const groupsBy = by.length ? by : ['name'];
+      const combos = vs.map((v) => ({
+        values: groupsBy.map((k) => k === 'name' ? plain(String(v.name || '').replace(new RegExp('^' + base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[-–,:|]?\\s*', 'i'), ''), 80) : plain(typeof v[k] === 'object' ? v[k]?.name : v[k], 80)),
+        price: priceOf(v.offers), image: abs(imgOf(v.image)),
+      }));
+      const t = tidyVariants(groupsBy.map((k, i) => ({ name: label[k.toLowerCase()] || 'Option', values: combos.map((c) => c.values[i]) })), combos);
+      if (t) return { v: t, base, image: abs(imgOf(p.image)), selected: null };
+    }
+    const offers: Json[] = ([] as Json[]).concat(p.offers || []).flatMap((x: Json) => x && x.offers ? [].concat(x.offers) : [x]);
+    const named = offers.filter((o) => o && o.name && String(o.name) !== String(p.name));
+    if (named.length >= 2) {
+      const combos = named.map((o) => ({ values: [plain(o.name, 80)], price: toPrice(o.price), image: abs(imgOf(o.image)) }));
+      const t = tidyVariants([{ name: 'Option', values: combos.map((c) => c.values[0]) }], combos);
+      if (t) return { v: t, base: plain(p.name, 200), image: '', selected: null };
+    }
+  }
+  return null;
+}
+// Shopify's product address + ".js" gives the product's full data (all versions) even when the page doesn't show it
+async function shopifyJs(pageUrl: string, fetchFn: typeof fetch) {
+  try {
+    const u = new URL(pageUrl); if (!/\/products\/[^/]+/.test(u.pathname)) return null;
+    const r = await withTimeout(fetchFn, 8000)(`${u.origin}${u.pathname.replace(/\/$/, '')}.js${u.search}`, { headers: { 'User-Agent': UA, Accept: 'application/json' } });
+    if (!r.ok || !/json|javascript/.test(r.headers.get('content-type') || '')) return null;
+    return shopifyVariants(await r.json(), pageUrl);
+  } catch (_) { return null; }
+}
 export function productFromHtml(html: string, pageUrl: string) {
   const out: Json = { name: '', price: null, currency: '', description: '', brand: '', image: '', shop: '' };
   const abs = (u: unknown) => { try { return u ? new URL(String(u), pageUrl).href : ''; } catch { return ''; } };
@@ -452,7 +533,24 @@ export function productFromHtml(html: string, pageUrl: string) {
   if (out.description && (out.description.length < 40 || fold2(out.description) === fold2(out.shop) || fold2(out.description) === fold2(out.name) || fold2(out.name).includes(fold2(out.description)))) out.description = '';
   // a page title often ends with " | Shop name": drop that
   if (out.shop && out.name) out.name = out.name.replace(new RegExp(`\\s*[|\\-–—:]\\s*${out.shop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'i'), '').trim();
+  const vr = variantsFromHtml(html, pageUrl, found);
+  if (vr) applyVariants(out, vr);
   return out;
+}
+// a product with versions: the general name, the product's own photo (not the shop's banner), the version from the link
+export function applyVariants(out: Json, vr: Json) {
+  if (!vr || !vr.v) return;
+  out.variants = vr.v;
+  if (vr.selected && vr.selected.length) out.selected = vr.selected;
+  if (vr.base) out.name = vr.base;
+  else for (const g of vr.v.groups) for (const val of g.values) {          // "Table WEC SAO PAULO 2026" -> "Table"
+    const re = new RegExp(`\\s*[-–,:|]?\\s*${val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'i');
+    if (re.test(out.name) && out.name.replace(re, '').length >= 4) { out.name = out.name.replace(re, '').trim(); if (!out.selected) out.selected = [val]; }
+  }
+  const sel = out.selected && vr.v.combos.find((c: Json) => c.values.join('|') === out.selected.join('|'));
+  const img = (sel && sel.image) || vr.image;
+  if (img) out.image = img;
+  if (sel && sel.price != null) out.price = sel.price;
 }
 // links on the page with their words (so each product in a list can open its own page)
 function pageLinks(html: string, pageUrl: string) {
@@ -483,6 +581,7 @@ Reply with only a JSON object like {"name":"...","price":1299.9,"currency":"CZK"
 - currency: ISO 4217 code (Kč = CZK, € = EUR, zł = PLN, £ = GBP; $ = USD unless the page says otherwise); null if unknown.
 - description: one or two plain sentences: what it is and its key details (model, size, colour, capacity…). No marketing claims.
 - category: the best fit from this list, copied exactly, or "" if none fits: ${JSON.stringify(cats.slice(0, 60))}
+- options: only if the page lets you choose between versions of this product (finish, edition, design, size, colour…): [{"name":"Finish","values":[{"value":"…","price":200}]}] with each version's price only if the page shows it, and give "name" without any one version in it (the general product name). Otherwise [].
 Shop link: ${link}
 Page text:
 """
@@ -496,6 +595,14 @@ ${text.slice(0, 14000)}
   const j = await r.json(); const t = (j.content || []).map((c: Json) => c.text || '').join('');
   const a = t.indexOf('{'), b = t.lastIndexOf('}');
   return a >= 0 && b > a ? JSON.parse(t.slice(a, b + 1)) : {};
+}
+// the AI's list of versions -> groups and combos (prices only when there's one group, so each value is one version)
+function variantsFromAi(opts: Json) {
+  if (!Array.isArray(opts) || !opts.length) return null;
+  const gs = opts.slice(0, 3).map((g: Json) => ({ name: plain(g && g.name, 40) || 'Option', vals: (Array.isArray(g && g.values) ? g.values : []).map((v: Json) => typeof v === 'string' ? { value: v } : v).filter((v: Json) => v && v.value) }));
+  if (!gs.length || gs.every((g: Json) => g.vals.length < 2)) return null;
+  const combos = gs.length === 1 ? gs[0].vals.map((v: Json) => ({ values: [plain(v.value, 80)], price: toPrice(v.price), image: '' })) : [];
+  return tidyVariants(gs.map((g: Json) => ({ name: g.name, values: g.vals.map((v: Json) => plain(v.value, 80)) })), combos);
 }
 const BLOCKED = "That shop doesn't let apps read its pages.";
 // a shop that blocks reading: its link often still names the product (alza.cz/sony-wh-1000xm5-cerna-d7051155.htm)
@@ -579,6 +686,7 @@ export async function readProduct(link: string, cats: string[], key: string, fet
     return { ok: false, blocked: true, error: BLOCKED, guessName: await nameFromLink(link, key, fetchFn) };
   }
   const prod: Json = productFromHtml(html, finalUrl);
+  if (!prod.variants && /cdn\.shopify\.com|Shopify\.shop|shopify-section/i.test(html)) { const sj = await shopifyJs(finalUrl, fetchFn); if (sj) applyVariants(prod, sj); }
   let how = 'page';
   // not clear from the page itself: the AI reads the page text (says if it's one product or a list, and picks a category)
   if (key && (!prod.sure || !prod.name || prod.price == null || !prod.description || (cats.length && !prod.category))) {
@@ -601,6 +709,7 @@ export async function readProduct(link: string, cats: string[], key: string, fet
       if (prod.price == null && toPrice(a.price) != null) { prod.price = toPrice(a.price); prod.currency = curCode(a.currency); }
       if (!prod.description && a.description) prod.description = descCut(a.description);
       if (a.category && cats.includes(a.category)) prod.category = a.category;
+      if (!prod.variants) { const vv = variantsFromAi(a.options); if (vv) { prod.variants = vv; if (a.name && prod.sure) prod.name = plain(a.name, 200); } }
       how = 'ai';
     } catch (_) { /* keep what the page gave */ }
   }
@@ -621,7 +730,7 @@ export async function readProduct(link: string, cats: string[], key: string, fet
     } catch (_) { /* no photo then */ }
   }
   if (!prod.name && prod.price == null) return { ok: false, error: "Couldn't find product details on that page. Fill it in yourself." };
-  return { ok: true, how, url: finalUrl, product: { name: prod.name, price: prod.price, currency: prod.currency || '', description: prod.description || '', brand: prod.brand || '', shop: prod.shop || '', category: prod.category || '' }, photo, imageUrl };
+  return { ok: true, how, url: finalUrl, product: { name: prod.name, price: prod.price, currency: prod.currency || '', description: prod.description || '', brand: prod.brand || '', shop: prod.shop || '', category: prod.category || '', ...(prod.variants ? { variants: prod.variants, selected: prod.selected || null } : {}) }, photo, imageUrl };
 }
 
 // ---------------- a link shared to the Wishlist (iPhone Shortcut) ----------------
@@ -727,7 +836,8 @@ export async function lookHarder(link: string, hint: string, cats: string[], key
         if (p.price == null && Number(o.price) > 0) { p.price = Math.round(Number(o.price) * 100) / 100; p.currency = String(o.currency || 'CZK').toUpperCase(); }
         if (!p.description && o.description) p.description = descCut(o.description);
         if (!p.category && o.category && cats.includes(o.category)) p.category = o.category;
-        if (/^https:\/\/\S+$/.test(String(o.image || ''))) image = String(o.image);
+        const site = (h: string) => h.replace(/^www\./, '').split('.').slice(-2).join('.');
+        if (/^https:\/\/\S+$/.test(String(o.image || '')) && (site(hostOf(String(o.image))) === site(hostOf(link)) || /cdn\.shopify\.com/.test(String(o.image)))) image = String(o.image);
         how = how ? how + '+web' : 'web';
       }
     }
@@ -744,7 +854,7 @@ export async function lookHarder(link: string, hint: string, cats: string[], key
   }
   const en = await toEnglish(p.name, p.description || '', key, fetchFn);
   if (en) { p.name = en.name; p.description = en.description; }
-  return { ok: true, how, product: { name: p.name, price: p.price ?? null, currency: p.currency || '', description: p.description || '', category: p.category || '' }, photo, imageUrl: photo ? '' : (image || (r && r.imageUrl) || '') };
+  return { ok: true, how, product: { name: p.name, price: p.price ?? null, currency: p.currency || '', description: p.description || '', category: p.category || '', ...(p.variants ? { variants: p.variants, selected: p.selected || null } : {}) }, photo, imageUrl: photo ? '' : (image || (r && r.imageUrl) || '') };
 }
 export async function shareToWishlist(db: Json, uid: string, raw: string, title: string, key: string, fetchFn: typeof fetch, phone = '') {
   const u0 = ((/https?:\/\/[^\s"'<>]+/.exec(raw) || [])[0] || '').replace(/[),.;!?]+$/, '');
@@ -772,6 +882,7 @@ export async function shareToWishlist(db: Json, uid: string, raw: string, title:
     if (p.description) { data.description = descCut(p.description); got.push('description'); }
     if (p.category && cats.includes(p.category)) { data.category = p.category; got.push('category'); }
     if (p.price != null && p.price > 0) { const cur = WISH_CURS.includes(p.currency) ? p.currency : 'CZK'; data.price = { amount: Math.round(p.price * 100) / 100, currency: cur }; got.push('price'); }
+    if (p.variants) { data.variants = p.variants; if (p.selected) data.choice = p.selected; got.push('versions'); }
   } else if (r && r.guessName) { data.name = r.guessName; got.push('name (from the link)'); }
   if (r && r.ok && r.photo && r.photo.b64) {
     try {
