@@ -1,0 +1,31 @@
+name: diag
+on:
+  push:
+    branches: [diag]
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: goodyear shop structure
+        continue-on-error: true
+        run: |
+          set +e
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+          curl -s -L -A "$UA" -o page.html -w '%{http_code}' https://goodyearstores.eu/pages/tires > c1.txt
+          curl -s -L -A "$UA" -o all.json -w '%{http_code}' 'https://goodyearstores.eu/products.json?limit=250' > c2.txt
+          curl -s -L -A "$UA" -o col.json -w '%{http_code}' 'https://goodyearstores.eu/collections/lifestyle/products.json?limit=250' > c3.txt
+          python3 - <<'PY' > o.txt
+          import json,re
+          h=open('page.html',errors='ignore').read()
+          print('page', open('c1.txt').read(), len(h), 'shopify', 'cdn.shopify.com' in h, 'title', (re.search(r'<title[^>]*>([^<]{0,90})',h) or [0,''])[1].strip(), 'productlinks', len(set(re.findall(r'/products/([a-z0-9-]+)',h))), sorted(set(re.findall(r'/products/([a-z0-9-]+)',h)))[:12])
+          print('collections linked', sorted(set(re.findall(r'/collections/([a-z0-9-]+)',h)))[:15])
+          for f,c in (('all.json','c2.txt'),('col.json','c3.txt')):
+            try:
+              ps=json.load(open(f))['products']; t=[p for p in ps if 'tire' in p['title'].lower() or 'tyre' in p['title'].lower()]
+              print(f, open(c).read(), 'products', len(ps), 'tire ones', len(t))
+              for p in t[:40]: print('  -', p['title'], '|', p['handle'], '|', [v['price'] for v in p['variants']][:3], '|', [o['name']+':'+'/'.join(o['values'][:4]) for o in p['options']], '| img', bool(p['images']))
+            except Exception as e: print(f, open(c).read(), 'ERR', str(e)[:80])
+          PY
+          echo "::notice title=goodyear::$(cat o.txt | tr '\n' '~' | cut -c1-7000)"
+          exit 0
