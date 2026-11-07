@@ -4551,6 +4551,8 @@ function descCut(v, max = 600){
   return i > max * 0.4 ? c.slice(0, i + 1) : c.replace(/\s+\S*$/, '') + '…';
 }
 // the description box grows with its text, so nothing hides below the edge
+// a description that stops mid-sentence ("…and includes a USB-"): cut off by the old 300-character limit
+function descLooksCut(d){ const t = String(d || '').trim(); return t.length >= 250 && !/[.!?…"”)\]]$/.test(t); }
 function fitBox(el){ if(!el) return; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight + 2, Math.round(innerHeight * 0.5)) + 'px'; }
 document.addEventListener('input', e=>{ if(e.target && e.target.id==='w_desc') fitBox(e.target); });
 // "Try again": fill in what's missing (a name that's only the shop's address, the price, description, photo, category)
@@ -4574,7 +4576,7 @@ async function lookHarder(id){
     const cur = p.currency && CURRENCIES.includes(String(p.currency).toUpperCase()) ? String(p.currency).toUpperCase() : BASE;
     upd.price = {amount: round2(price), currency: cur}; got.push('price');
   }
-  const looseDesc = !w.description || (w.shared && w.toSort) || /^sent from .{1,40}:?$/i.test(w.description.trim());
+  const looseDesc = !w.description || (w.shared && w.toSort) || /^sent from .{1,40}:?$/i.test(w.description.trim()) || descLooksCut(w.description);
   if(p.description && looseDesc && p.description !== w.description){ upd.description = descCut(p.description); got.push('description'); }
   if(p.category && !w.category && itemCategories.includes(p.category)){ upd.category = p.category; got.push('category'); }
   if(!w.imageUrl){
@@ -4665,7 +4667,7 @@ function openWishDetail(id){
       : w.toSort ? `<div class="status-box sort-box"><span>📥 You shared this from your phone. Check the details, then tap <b>Edit</b> and save.</span>
            <button type="button" class="link-btn" onclick="wishSorted('${w.id}')">✓ It’s fine as it is</button></div>`
       : needsBox(missingWishInfo(w), `openWishEdit('${w.id}')`)}
-    ${!bought && w.link && (w.toSort || !w.price || !w.imageUrl || !w.description) ? `<div class="retry-row"><button type="button" class="retry-btn" id="retry-${w.id}" onclick="lookHarder('${w.id}')">✨ Try again: look harder for the details</button>
+    ${!bought && w.link && (w.toSort || !w.price || !w.imageUrl || !w.description || descLooksCut(w.description)) ? `<div class="retry-row"><button type="button" class="retry-btn" id="retry-${w.id}" onclick="lookHarder('${w.id}')">✨ Try again: look harder for the details</button>
       <small>Reads the shop page again and, if the shop blocks it, searches the web for this exact item. Fills in only what’s missing.</small></div>` : ''}
     <div class="desc">${esc(w.description||'No description.')}</div>
     <div class="detail-meta"><div>Date added<b>${itemDate(w)?fmtDate(itemDate(w)):'—'}</b></div></div>
