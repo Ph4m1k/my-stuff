@@ -1298,6 +1298,9 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
   .ver-label{font-size:0.78rem;font-weight:600;color:var(--muted);margin-bottom:4px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
   .ver-label span{font-weight:400;}
   .ver-chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .ver-label{display:block;}
+  .ver-select{width:100%;max-width:360px;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:0.86rem;cursor:pointer;}
+  .ver-select:focus{outline:2px solid var(--accent);outline-offset:1px;}
   .ver-chip{border:1px solid var(--line);background:none;color:var(--ink);border-radius:999px;padding:5px 11px;cursor:pointer;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:0.82rem;}
   .ver-chip small{color:var(--muted);margin-left:3px;}
   .ver-chip:hover{border-color:var(--accent);}
@@ -4573,18 +4576,30 @@ function choiceText(w){ return Array.isArray(w.choice) ? w.choice.filter(Boolean
 function versionsHTML(w){
   const v = w.variants; if(!v || !Array.isArray(v.groups) || !v.groups.length) return '';
   const ch = Array.isArray(w.choice) ? w.choice : [];
-  return `<div class="versions">${v.groups.map((g, gi)=>`<div class="ver-group"><div class="ver-label">${esc(g.name || 'Version')}${ch[gi] ? '' : ' <span>· pick one</span>'}</div>
-    <div class="ver-chips">${(g.values || []).map(val=>{
-      const c = (v.combos || []).find(x=>x.values && x.values[gi]===val && (v.groups.length===1 || v.groups.every((_, k)=>k===gi || !ch[k] || x.values[k]===ch[k])));
-      const pr = c && c.price != null && v.groups.length===1 ? ` <small>${esc(fmtShort(c.price, w.price && w.price.currency))}</small>` : '';
-      return `<button type="button" class="ver-chip${ch[gi]===val ? ' on' : ''}" aria-pressed="${ch[gi]===val}" onclick="pickVersion('${w.id}', ${gi}, ${esc(JSON.stringify(val))})">${esc(val)}${pr}</button>`; }).join('')}</div></div>`).join('')}</div>`;
+  // each value's price (for one choice, or when the other choices are already picked)
+  const priceFor = (gi, val)=>{
+    const c = (v.combos || []).find(x=>x.values && x.values[gi]===val && v.groups.every((_, k)=>k===gi || !ch[k] || x.values[k]===ch[k]));
+    const sure = v.groups.every((_, k)=>k===gi || ch[k]);
+    return c && c.price != null && sure ? fmtShort(c.price, w.price && w.price.currency) : '';
+  };
+  return `<div class="versions">${v.groups.map((g, gi)=>{
+    const vals = g.values || [], label = `<label class="ver-label" for="ver-${w.id}-${gi}">${esc(g.name || 'Version')}${ch[gi] ? '' : ' <span>· pick one</span>'}</label>`;
+    // many choices (more than 4): a dropdown, so a long list of editions doesn't fill the page
+    if(vals.length > 4) return `<div class="ver-group">${label}
+      <select class="ver-select" id="ver-${w.id}-${gi}" onchange="pickVersion('${w.id}', ${gi}, this.value, true)">
+        <option value="">${ch[gi] ? '— none —' : 'Pick one…'}</option>
+        ${vals.map(val=>{ const pr = priceFor(gi, val); return `<option value="${esc(val)}"${ch[gi]===val ? ' selected' : ''}>${esc(val)}${pr ? ' — ' + esc(pr) : ''}</option>`; }).join('')}
+      </select></div>`;
+    return `<div class="ver-group">${label}<div class="ver-chips">${vals.map(val=>{ const pr = priceFor(gi, val);
+      return `<button type="button" class="ver-chip${ch[gi]===val ? ' on' : ''}" aria-pressed="${ch[gi]===val}" onclick="pickVersion('${w.id}', ${gi}, ${esc(JSON.stringify(val))})">${esc(val)}${pr ? ` <small>${esc(pr)}</small>` : ''}</button>`; }).join('')}</div></div>`;
+  }).join('')}</div>`;
 }
 function fmtShort(n, cur){ try{ return new Intl.NumberFormat('cs-CZ', {style: 'currency', currency: cur || BASE, maximumFractionDigits: n % 1 ? 2 : 0}).format(n); }catch(e){ return String(n); } }
-async function pickVersion(id, gi, val){
+async function pickVersion(id, gi, val, set){
   const w = wishes.find(x=>x.id===id); if(!w || !w.variants) return;
   const v = w.variants, ch = (Array.isArray(w.choice) ? w.choice.slice() : []);
   while(ch.length < v.groups.length) ch.push('');
-  ch[gi] = ch[gi]===val ? '' : val;                                 // tap the chosen one again to un-pick it
+  ch[gi] = set ? val : (ch[gi]===val ? '' : val);                   // a button: tap the chosen one again to un-pick it; a dropdown: what you chose
   const upd = {choice: ch.some(Boolean) ? ch : null};
   // every group picked: that version's price and photo
   const c = ch.every(Boolean) && (v.combos || []).find(x=>x.values && x.values.every((y, k)=>y===ch[k]));
